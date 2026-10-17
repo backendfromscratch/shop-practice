@@ -102,7 +102,7 @@ app.get('/eco', eco, (c) =>
 app.get('/salud', async (c) => {
   try {
     await pool.query('SELECT 1');
-    return c.json({ estado: 'ok' });
+    return c.json({ estado: 'bien' });
   } catch {
     return problemaHttp(c, 503, 'La base de datos no responde');
   }
