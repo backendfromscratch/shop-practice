@@ -6,172 +6,173 @@ import { promisify } from 'node:util';
 import { serve } from '@hono/node-server';
 import { app } from '../src/app.ts';
 import { config } from '../src/config.ts';
-import { buscarPedido, cambiarEstado } from '../src/datos.ts';
-import { firmar } from '../src/firma.ts';
-import { usarBd } from './bd.ts';
-import { CARMEN, comoUsuario } from './identidades.ts';
+import { changeStatus, findOrder } from '../src/data.ts';
+import { sign } from '../src/signature.ts';
+import { useDb } from './db.ts';
+import { CARMEN, asUser } from './identities.ts';
 
-// Los pedidos los hace Carmen, una clienta.
+// The orders are placed by Carmen, a customer.
 let carmen: Record<string, string>;
-usarBd(async () => {
-  carmen = await comoUsuario(CARMEN);
+useDb(async () => {
+  carmen = await asUser(CARMEN);
 });
 
-const ejecutar = promisify(execFile);
+const run = promisify(execFile);
 
-/** Crea un pedido pendiente y devuelve su id. */
-async function pedidoNuevo(cabeceras: Record<string, string> = {}): Promise<number> {
-  const res = await app.request('/v2/pedidos', {
+/** Creates a pending order and returns its id. */
+async function newOrder(headers: Record<string, string> = {}): Promise<number> {
+  const res = await app.request('/v2/orders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...carmen, ...cabeceras },
-    body: '{"productoId":1,"cantidad":1}',
+    headers: { 'Content-Type': 'application/json', ...carmen, ...headers },
+    body: '{"productId":1,"quantity":1}',
   });
   return (await res.json()).id;
 }
 
-/** Manda un webhook con el cuerpo y la firma que se le den. */
-const avisar = (cuerpo: string, firma?: string) =>
-  app.request('/v2/webhooks/pagos', {
+/** Sends a webhook with the body and the signature it's given. */
+const notify = (body: string, signature?: string) =>
+  app.request('/v2/webhooks/payments', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(firma ? { 'X-Firma': firma } : {}) },
-    body: cuerpo,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(signature ? { 'X-Signature': signature } : {}),
+    },
+    body,
   });
 
-const evento = (id: string, pedidoId: number) =>
-  JSON.stringify({ id, tipo: 'pago.completado', pedidoId });
+const event = (id: string, orderId: number) =>
+  JSON.stringify({ id, type: 'payment.completed', orderId });
 
-test('la firma: sha256= y 64 cifras hexadecimales; cambia si cambia un byte', () => {
-  assert.match(firmar('{"a":1}', 'secreto'), /^sha256=[0-9a-f]{64}$/);
-  assert.notEqual(firmar('{"a":1}', 'secreto'), firmar('{"a":2}', 'secreto'));
-  assert.notEqual(firmar('{"a":1}', 'secreto'), firmar('{"a":1}', 'otro secreto'));
+test('the signature: sha256= and 64 hexadecimal digits; it changes if a byte changes', () => {
+  assert.match(sign('{"a":1}', 'secret'), /^sha256=[0-9a-f]{64}$/);
+  assert.notEqual(sign('{"a":1}', 'secret'), sign('{"a":2}', 'secret'));
+  assert.notEqual(sign('{"a":1}', 'secret'), sign('{"a":1}', 'another secret'));
 });
 
-test('un aviso con la firma correcta: 200, y el pedido pasa a pagado', async () => {
-  const id = await pedidoNuevo();
-  const cuerpo = evento('evt_1', id);
-  const res = await avisar(cuerpo, firmar(cuerpo, config.WEBHOOK_SECRET));
+test('a notification with the right signature: 200, and the order becomes paid', async () => {
+  const id = await newOrder();
+  const body = event('evt_1', id);
+  const res = await notify(body, sign(body, config.WEBHOOK_SECRET));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { recibido: 'evt_1', repetido: false });
-  assert.equal((await buscarPedido(id))!.estado, 'pagado');
+  assert.deepEqual(await res.json(), { received: 'evt_1', repeated: false });
+  assert.equal((await findOrder(id))!.status, 'paid');
 });
 
-test('el mismo evento otra vez: se acusa recibo, pero no se procesa de nuevo', async () => {
-  const id = await pedidoNuevo();
-  const cuerpo = evento('evt_2', id);
-  const firma = firmar(cuerpo, config.WEBHOOK_SECRET);
-  await avisar(cuerpo, firma);
-  // Entre medias, el pedido se cancela: si el evento se procesara otra vez, no debería cambiar.
-  await cambiarEstado(id, 'cancelado');
-  const res = await avisar(cuerpo, firma);
+test('the same event again: receipt is acknowledged, but it is not processed again', async () => {
+  const id = await newOrder();
+  const body = event('evt_2', id);
+  const signature = sign(body, config.WEBHOOK_SECRET);
+  await notify(body, signature);
+  // In between, the order is cancelled: if the event were processed again, it shouldn't change.
+  await changeStatus(id, 'cancelled');
+  const res = await notify(body, signature);
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { recibido: 'evt_2', repetido: true });
-  assert.equal((await buscarPedido(id))!.estado, 'cancelado');
+  assert.deepEqual(await res.json(), { received: 'evt_2', repeated: true });
+  assert.equal((await findOrder(id))!.status, 'cancelled');
 });
 
-test('un cuerpo cambiado por el camino: 400, y el pedido no cambia', async () => {
-  const id = await pedidoNuevo();
-  const original = evento('evt_3', id - 1);
-  const manipulado = evento('evt_3', id);
-  const res = await avisar(manipulado, firmar(original, config.WEBHOOK_SECRET));
+test('a body changed on the way: 400, and the order does not change', async () => {
+  const id = await newOrder();
+  const original = event('evt_3', id - 1);
+  const tampered = event('evt_3', id);
+  const res = await notify(tampered, sign(original, config.WEBHOOK_SECRET));
   assert.equal(res.status, 400);
   assert.equal(res.headers.get('content-type'), 'application/problem+json');
-  assert.equal((await res.json()).type, 'https://tienda.example/problemas/firma-no-valida');
-  assert.equal((await buscarPedido(id))!.estado, 'pendiente');
+  assert.equal((await res.json()).type, 'https://shop.example/problems/invalid-signature');
+  assert.equal((await findOrder(id))!.status, 'pending');
 });
 
-test('sin firma, o firmado con otro secreto: 400', async () => {
-  const cuerpo = evento('evt_4', 1);
-  assert.equal((await avisar(cuerpo)).status, 400);
-  assert.equal((await avisar(cuerpo, firmar(cuerpo, 'un-secreto-que-no-es-el-bueno'))).status, 400);
-  assert.equal((await avisar(cuerpo, 'sha256=corta')).status, 400);
+test('without a signature, or signed with another secret: 400', async () => {
+  const body = event('evt_4', 1);
+  assert.equal((await notify(body)).status, 400);
+  assert.equal((await notify(body, sign(body, 'a-secret-that-is-not-the-right-one'))).status, 400);
+  assert.equal((await notify(body, 'sha256=short')).status, 400);
 });
 
-test('bien firmado, pero un evento que no vale o de un pedido que no existe: 422', async () => {
-  const otroTipo = JSON.stringify({ id: 'evt_5', tipo: 'pago.devuelto', pedidoId: 1 });
-  const res = await avisar(otroTipo, firmar(otroTipo, config.WEBHOOK_SECRET));
+test('well signed, but an invalid event or one for an order that does not exist: 422', async () => {
+  const otherType = JSON.stringify({ id: 'evt_5', type: 'payment.refunded', orderId: 1 });
+  const res = await notify(otherType, sign(otherType, config.WEBHOOK_SECRET));
   assert.equal(res.status, 422);
-  assert.deepEqual((await res.json()).errores, [
-    { campo: 'tipo', problema: 'Solo se aceptan pagos completados' },
+  assert.deepEqual((await res.json()).errors, [
+    { field: 'type', problem: 'Only completed payments are accepted' },
   ]);
-  const sinPedido = evento('evt_6', 999);
-  const otro = await avisar(sinPedido, firmar(sinPedido, config.WEBHOOK_SECRET));
-  assert.equal(otro.status, 422);
-  assert.deepEqual((await otro.json()).errores, [
-    { campo: 'pedidoId', problema: 'No existe ese pedido' },
-  ]);
+  const noOrder = event('evt_6', 999);
+  const other = await notify(noOrder, sign(noOrder, config.WEBHOOK_SECRET));
+  assert.equal(other.status, 422);
+  assert.deepEqual((await other.json()).errors, [{ field: 'orderId', problem: 'No such order' }]);
 });
 
-test('Idempotency-Key: repetir la petición devuelve la misma respuesta, sin crear otro pedido', async () => {
-  const pedir = () =>
-    app.request('/v2/pedidos', {
+test('Idempotency-Key: repeating the request returns the same response, without creating another order', async () => {
+  const send = () =>
+    app.request('/v2/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'clave-1', ...carmen },
-      body: '{"productoId":2,"cantidad":3}',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key-1', ...carmen },
+      body: '{"productId":2,"quantity":3}',
     });
-  const primera = await pedir();
-  const segunda = await pedir();
-  assert.equal(primera.status, 201);
-  assert.equal(segunda.status, 201);
-  assert.equal(primera.headers.get('idempotent-replayed'), null);
-  assert.equal(segunda.headers.get('idempotent-replayed'), 'true');
-  assert.equal(segunda.headers.get('location'), primera.headers.get('location'));
-  assert.deepEqual(await segunda.json(), await primera.json());
-  const siguiente = await pedidoNuevo();
-  assert.equal(siguiente, Number(primera.headers.get('location')!.split('/').at(-1)) + 1);
+  const first = await send();
+  const second = await send();
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.equal(first.headers.get('idempotent-replayed'), null);
+  assert.equal(second.headers.get('idempotent-replayed'), 'true');
+  assert.equal(second.headers.get('location'), first.headers.get('location'));
+  assert.deepEqual(await second.json(), await first.json());
+  const next = await newOrder();
+  assert.equal(next, Number(first.headers.get('location')!.split('/').at(-1)) + 1);
 });
 
-test('la respuesta repetida lleva el X-Request-Id de su propia petición', async () => {
-  const pedir = () =>
-    app.request('/v2/pedidos', {
+test('the replayed response carries the X-Request-Id of its own request', async () => {
+  const send = () =>
+    app.request('/v2/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'clave-3', ...carmen },
-      body: '{"productoId":1,"cantidad":2}',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key-3', ...carmen },
+      body: '{"productId":1,"quantity":2}',
     });
-  const primera = await pedir();
-  const segunda = await pedir();
-  assert.equal(segunda.headers.get('idempotent-replayed'), 'true');
-  // Es otra petición: su id es suyo, no el de la primera.
-  const id = segunda.headers.get('x-request-id');
+  const first = await send();
+  const second = await send();
+  assert.equal(second.headers.get('idempotent-replayed'), 'true');
+  // It's another request: its id is its own, not the first one's.
+  const id = second.headers.get('x-request-id');
   assert.match(id ?? '', /^[0-9a-f-]{36}$/);
-  assert.notEqual(id, primera.headers.get('x-request-id'));
+  assert.notEqual(id, first.headers.get('x-request-id'));
 });
 
-test('la misma clave con otros datos: 422', async () => {
-  await pedidoNuevo({ 'Idempotency-Key': 'clave-2' });
-  const res = await app.request('/v2/pedidos', {
+test('the same key with other data: 422', async () => {
+  await newOrder({ 'Idempotency-Key': 'key-2' });
+  const res = await app.request('/v2/orders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'clave-2', ...carmen },
-    body: '{"productoId":3,"cantidad":1}',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key-2', ...carmen },
+    body: '{"productId":3,"quantity":1}',
   });
   assert.equal(res.status, 422);
-  assert.equal((await res.json()).type, 'https://tienda.example/problemas/clave-reutilizada');
+  assert.equal((await res.json()).type, 'https://shop.example/problems/reused-key');
 });
 
-test('sin Idempotency-Key, cada petición crea un pedido', async () => {
-  assert.notEqual(await pedidoNuevo(), await pedidoNuevo());
+test('without an Idempotency-Key, each request creates an order', async () => {
+  assert.notEqual(await newOrder(), await newOrder());
 });
 
-test('scripts/pasarela.ts: avisa, con --manipular le dicen 400 y con --repetir, repetido', async () => {
-  const servidor = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' });
-  await new Promise((listo) => servidor.once('listening', listo));
+test('scripts/payment-gateway.ts: notifies, gets 400 with --tamper and repeated with --repeat', async () => {
+  const server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' });
+  await new Promise((ready) => server.once('listening', ready));
   const env = {
     ...process.env,
-    TIENDA_URL: `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`,
+    SHOP_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
   };
-  const pasarela = (...argumentos: string[]) =>
-    ejecutar('node', ['scripts/pasarela.ts', ...argumentos], { env });
+  const gateway = (...args: string[]) =>
+    run('node', ['scripts/payment-gateway.ts', ...args], { env });
   try {
-    const id = await pedidoNuevo();
-    const manipulado = await pasarela(String(id), '--manipular');
-    assert.match(manipulado.stdout, /^← 400 /m);
-    assert.equal((await buscarPedido(id))!.estado, 'pendiente');
+    const id = await newOrder();
+    const tampered = await gateway(String(id), '--tamper');
+    assert.match(tampered.stdout, /^← 400 /m);
+    assert.equal((await findOrder(id))!.status, 'pending');
 
-    const repetido = await pasarela(String(id), '--repetir');
-    const respuestas = repetido.stdout.split('\n').filter((linea) => linea.startsWith('←'));
-    assert.match(respuestas[0]!, /^← 200 .*"repetido":false/);
-    assert.match(respuestas[1]!, /^← 200 .*"repetido":true/);
-    assert.equal((await buscarPedido(id))!.estado, 'pagado');
+    const repeated = await gateway(String(id), '--repeat');
+    const responses = repeated.stdout.split('\n').filter((line) => line.startsWith('←'));
+    assert.match(responses[0]!, /^← 200 .*"repeated":false/);
+    assert.match(responses[1]!, /^← 200 .*"repeated":true/);
+    assert.equal((await findOrder(id))!.status, 'paid');
   } finally {
-    servidor.close();
+    server.close();
   }
 });

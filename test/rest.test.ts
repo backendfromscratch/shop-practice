@@ -1,128 +1,128 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { app } from '../src/app.ts';
-import { buscarPedido, cambiarEstado } from '../src/datos.ts';
-import { usarBd } from './bd.ts';
-import { ANA, CARMEN, comoUsuario } from './identidades.ts';
+import { changeStatus, findOrder } from '../src/data.ts';
+import { useDb } from './db.ts';
+import { ANA, CARMEN, asUser } from './identities.ts';
 
-// Ana es admin (gestiona productos); Carmen, clienta (hace pedidos). Si no se dice otra cosa, las
-// peticiones van con la sesión de Carmen.
+// Ana is admin (she manages products); Carmen, a customer (she places orders). Unless something
+// else is said, the requests go with Carmen's session.
 let admin: Record<string, string>;
 let carmen: Record<string, string>;
-usarBd(async () => {
-  admin = await comoUsuario(ANA);
-  carmen = await comoUsuario(CARMEN);
+useDb(async () => {
+  admin = await asUser(ANA);
+  carmen = await asUser(CARMEN);
 });
 
-const pedir = (metodo: string, ruta: string, cuerpo?: unknown, cabeceras = carmen) =>
-  app.request(ruta, {
-    method: metodo,
-    headers: { 'Content-Type': 'application/json', ...cabeceras },
-    body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
+const send = (method: string, path: string, body?: unknown, headers = carmen) =>
+  app.request(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-/** Crea un pedido y devuelve su id. */
-async function pedidoNuevo(): Promise<number> {
-  const res = await pedir('POST', '/v2/pedidos', { productoId: 1, cantidad: 2 });
+/** Creates an order and returns its id. */
+async function newOrder(): Promise<number> {
+  const res = await send('POST', '/v2/orders', { productId: 1, quantity: 2 });
   return (await res.json()).id;
 }
 
-test('crear un pedido: 201, con su URL en Location, y aparece en la lista', async () => {
-  const res = await pedir('POST', '/v2/pedidos', { productoId: 1, cantidad: 2 });
+test('creating an order: 201, with its URL in Location, and it shows up in the list', async () => {
+  const res = await send('POST', '/v2/orders', { productId: 1, quantity: 2 });
   assert.equal(res.status, 201);
-  const pedido = await res.json();
-  assert.equal(res.headers.get('location'), `/v2/pedidos/${pedido.id}`);
-  assert.equal(pedido.estado, 'pendiente');
-  const lista = await (await app.request('/v2/pedidos', { headers: carmen })).json();
-  assert.ok(lista.some((otro: { id: number }) => otro.id === pedido.id));
+  const order = await res.json();
+  assert.equal(res.headers.get('location'), `/v2/orders/${order.id}`);
+  assert.equal(order.status, 'pending');
+  const list = await (await app.request('/v2/orders', { headers: carmen })).json();
+  assert.ok(list.some((other: { id: number }) => other.id === order.id));
 });
 
-test('DELETE /productos/:id sin sesión: 401', async () => {
-  assert.equal((await pedir('DELETE', '/v2/productos/1', undefined, {})).status, 401);
+test('DELETE /products/:id without a session: 401', async () => {
+  assert.equal((await send('DELETE', '/v2/products/1', undefined, {})).status, 401);
 });
 
-test('DELETE /productos/:id: 204 sin cuerpo; después, 404', async () => {
-  const creado = await (
-    await pedir('POST', '/v2/productos', { nombre: 'Gorra', precioCentimos: 1500 }, admin)
+test('DELETE /products/:id: 204 without a body; afterwards, 404', async () => {
+  const created = await (
+    await send('POST', '/v2/products', { name: 'Cap', priceCents: 1500 }, admin)
   ).json();
-  const res = await pedir('DELETE', `/v2/productos/${creado.id}`, undefined, admin);
+  const res = await send('DELETE', `/v2/products/${created.id}`, undefined, admin);
   assert.equal(res.status, 204);
   assert.equal(await res.text(), '');
-  assert.equal((await app.request(`/v2/productos/${creado.id}`)).status, 404);
-  assert.equal((await pedir('DELETE', `/v2/productos/${creado.id}`, undefined, admin)).status, 404);
+  assert.equal((await app.request(`/v2/products/${created.id}`)).status, 404);
+  assert.equal((await send('DELETE', `/v2/products/${created.id}`, undefined, admin)).status, 404);
 });
 
-test('después de borrar, un producto nuevo no repite el id de otro', async () => {
-  // La gorra (4): un producto sin pedidos, que sí se puede borrar.
-  assert.equal((await pedir('DELETE', '/v2/productos/4', undefined, admin)).status, 204);
-  const nuevo = await (
-    await pedir('POST', '/v2/productos', { nombre: 'Gorro', precioCentimos: 1200 }, admin)
+test('after a delete, a new product does not repeat the id of another one', async () => {
+  // The cap (4): a product without orders, which can be deleted.
+  assert.equal((await send('DELETE', '/v2/products/4', undefined, admin)).status, 204);
+  const added = await (
+    await send('POST', '/v2/products', { name: 'Beanie', priceCents: 1200 }, admin)
   ).json();
-  const lista = await (await app.request('/v2/productos')).json();
-  const ids = lista.map((producto: { id: number }) => producto.id);
+  const list = await (await app.request('/v2/products')).json();
+  const ids = list.map((product: { id: number }) => product.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.ok(!ids.slice(0, -1).includes(nuevo.id));
+  assert.ok(!ids.slice(0, -1).includes(added.id));
 });
 
-test('PATCH /pedidos/:id cambia la cantidad y devuelve el pedido entero', async () => {
-  const id = await pedidoNuevo();
-  const res = await pedir('PATCH', `/v2/pedidos/${id}`, { cantidad: 5 });
+test('PATCH /orders/:id changes the quantity and returns the whole order', async () => {
+  const id = await newOrder();
+  const res = await send('PATCH', `/v2/orders/${id}`, { quantity: 5 });
   assert.equal(res.status, 200);
-  const { creadoEn, ...pedido } = await res.json();
-  assert.deepEqual(pedido, {
+  const { createdAt, ...order } = await res.json();
+  assert.deepEqual(order, {
     id,
-    productoId: 1,
-    cantidad: 5,
-    estado: 'pendiente',
-    clienteId: 3,
+    productId: 1,
+    quantity: 5,
+    status: 'pending',
+    customerId: 3,
   });
-  assert.equal(typeof creadoEn, 'string');
+  assert.equal(typeof createdAt, 'string');
 });
 
-test('PATCH con una cantidad que no vale: 422; a un pedido que no existe: 404', async () => {
-  const id = await pedidoNuevo();
-  assert.equal((await pedir('PATCH', `/v2/pedidos/${id}`, { cantidad: 0 })).status, 422);
-  assert.equal((await pedir('PATCH', '/v2/pedidos/999', { cantidad: 1 })).status, 404);
+test('PATCH with an invalid quantity: 422; to an order that does not exist: 404', async () => {
+  const id = await newOrder();
+  assert.equal((await send('PATCH', `/v2/orders/${id}`, { quantity: 0 })).status, 422);
+  assert.equal((await send('PATCH', '/v2/orders/999', { quantity: 1 })).status, 404);
 });
 
-test('PATCH a un pedido ya pagado: 409, y el pedido no cambia', async () => {
-  const id = await pedidoNuevo();
-  await cambiarEstado(id, 'pagado');
-  const res = await pedir('PATCH', `/v2/pedidos/${id}`, { cantidad: 5 });
+test('PATCH to an order already paid: 409, and the order does not change', async () => {
+  const id = await newOrder();
+  await changeStatus(id, 'paid');
+  const res = await send('PATCH', `/v2/orders/${id}`, { quantity: 5 });
   assert.equal(res.status, 409);
-  assert.equal((await res.json()).detail, 'El pedido está pagado: ya no se puede cambiar');
-  assert.equal((await buscarPedido(id))!.cantidad, 2);
+  assert.equal((await res.json()).detail, 'The order is paid: it can no longer be changed');
+  assert.equal((await findOrder(id))!.quantity, 2);
 });
 
-test('POST /pedidos/:id/cancelacion: el pedido queda cancelado, aunque se repita', async () => {
-  const id = await pedidoNuevo();
-  for (let vez = 1; vez <= 2; vez++) {
-    const res = await pedir('POST', `/v2/pedidos/${id}/cancelacion`);
+test('POST /orders/:id/cancellation: the order is cancelled, even if repeated', async () => {
+  const id = await newOrder();
+  for (let time = 1; time <= 2; time++) {
+    const res = await send('POST', `/v2/orders/${id}/cancellation`);
     assert.equal(res.status, 200);
-    assert.equal((await res.json()).estado, 'cancelado');
+    assert.equal((await res.json()).status, 'cancelled');
   }
-  assert.equal((await pedir('PATCH', `/v2/pedidos/${id}`, { cantidad: 3 })).status, 409);
+  assert.equal((await send('PATCH', `/v2/orders/${id}`, { quantity: 3 })).status, 409);
 });
 
-test('cancelar un pedido enviado: 409; uno que no existe: 404', async () => {
-  const id = await pedidoNuevo();
-  await cambiarEstado(id, 'enviado');
-  const res = await pedir('POST', `/v2/pedidos/${id}/cancelacion`);
+test('cancelling a shipped order: 409; one that does not exist: 404', async () => {
+  const id = await newOrder();
+  await changeStatus(id, 'shipped');
+  const res = await send('POST', `/v2/orders/${id}/cancellation`);
   assert.equal(res.status, 409);
-  assert.equal((await buscarPedido(id))!.estado, 'enviado');
-  assert.equal((await pedir('POST', '/v2/pedidos/999/cancelacion')).status, 404);
+  assert.equal((await findOrder(id))!.status, 'shipped');
+  assert.equal((await send('POST', '/v2/orders/999/cancellation')).status, 404);
 });
 
-test('un método que la ruta no tiene: 405, con los que sí tiene en Allow', async () => {
-  const casos = [
-    ['PUT', '/v2/productos/1', 'GET, DELETE'],
-    ['DELETE', '/v2/pedidos', 'GET, POST'],
-    ['DELETE', '/v2/pedidos/1', 'GET, PATCH'],
-    ['GET', '/v2/pedidos/1/cancelacion', 'POST'],
+test('a method the route does not have: 405, with the ones it has in Allow', async () => {
+  const cases = [
+    ['PUT', '/v2/products/1', 'GET, DELETE'],
+    ['DELETE', '/v2/orders', 'GET, POST'],
+    ['DELETE', '/v2/orders/1', 'GET, PATCH'],
+    ['GET', '/v2/orders/1/cancellation', 'POST'],
   ];
-  for (const [metodo, ruta, permitidos] of casos) {
-    const res = await pedir(metodo!, ruta!);
-    assert.equal(res.status, 405, `${metodo} ${ruta}`);
-    assert.equal(res.headers.get('allow'), permitidos);
+  for (const [method, path, allowed] of cases) {
+    const res = await send(method!, path!);
+    assert.equal(res.status, 405, `${method} ${path}`);
+    assert.equal(res.headers.get('allow'), allowed);
   }
 });

@@ -1,117 +1,115 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { app } from '../src/app.ts';
-import { pool } from '../src/bd.ts';
-import { ejecutar, usarBd } from './bd.ts';
-import { ANA, comoUsuario } from './identidades.ts';
+import { pool } from '../src/db.ts';
+import { run, useDb } from './db.ts';
+import { ANA, asUser } from './identities.ts';
 
 let admin: Record<string, string>;
-usarBd(async () => {
-  admin = await comoUsuario(ANA);
+useDb(async () => {
+  admin = await asUser(ANA);
 });
 
-/** Los productos de una URL de la API, como «id: categorías». */
-async function categoriasDe(url: string): Promise<Record<number, string[]>> {
+/** The products from an API URL, as "id: categories". */
+async function categoriesOf(url: string): Promise<Record<number, string[]>> {
   const res = await app.request(url);
   assert.equal(res.status, 200, url);
-  const lista: { id: number; categorias: string[] }[] = await res.json();
-  return Object.fromEntries(lista.map((producto) => [producto.id, producto.categorias]));
+  const list: { id: number; categories: string[] }[] = await res.json();
+  return Object.fromEntries(list.map((product) => [product.id, product.categories]));
 }
 
-test('v2 enseña las categorías de cada producto, en la lista y de uno en uno', async () => {
-  assert.deepEqual(await categoriasDe('/v2/productos'), {
-    1: ['Ropa'],
-    2: ['Hogar', 'Regalos'],
-    3: ['Ropa'],
-    4: ['Ropa', 'Regalos'],
+test('v2 shows the categories of each product, in the list and one by one', async () => {
+  assert.deepEqual(await categoriesOf('/v2/products'), {
+    1: ['Clothing'],
+    2: ['Home', 'Gifts'],
+    3: ['Clothing'],
+    4: ['Clothing', 'Gifts'],
   });
-  assert.deepEqual(await (await app.request('/v2/productos/2')).json(), {
+  assert.deepEqual(await (await app.request('/v2/products/2')).json(), {
     id: 2,
-    nombre: 'Taza',
-    precioCentimos: 850,
+    name: 'Mug',
+    priceCents: 850,
     stock: 60,
-    categorias: ['Hogar', 'Regalos'],
+    categories: ['Home', 'Gifts'],
   });
 });
 
-test('un producto nuevo empieza sin categorías y sin stock', async () => {
-  const res = await app.request('/v2/productos', {
+test('a new product starts without categories and without stock', async () => {
+  const res = await app.request('/v2/products', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...admin },
-    body: '{"nombre":"Chapa","precioCentimos":200}',
+    body: '{"name":"Pin","priceCents":200}',
   });
   assert.equal(res.status, 201);
-  const { id, ...producto } = await res.json();
-  assert.deepEqual(producto, { nombre: 'Chapa', precioCentimos: 200, stock: 0, categorias: [] });
-  await app.request(`/v2/productos/${id}`, {
+  const { id, ...product } = await res.json();
+  assert.deepEqual(product, { name: 'Pin', priceCents: 200, stock: 0, categories: [] });
+  await app.request(`/v2/products/${id}`, {
     method: 'DELETE',
     headers: admin,
   });
 });
 
-test('?categoria= filtra, sin importar las mayúsculas, y se combina con los otros filtros', async () => {
-  const ids = async (url: string) => Object.keys(await categoriasDe(url)).map(Number);
-  assert.deepEqual(await ids('/v2/productos?categoria=ropa'), [1, 3, 4]);
-  assert.deepEqual(await ids('/v2/productos?categoria=REGALOS'), [2, 4]);
-  assert.deepEqual(await ids('/v2/productos?categoria=juguetes'), []);
-  const baratos = await (
-    await app.request('/v2/productos?categoria=Ropa&maxCentimos=2000&orden=-precio')
+test('?category= filters, whatever the capital letters, and combines with the other filters', async () => {
+  const ids = async (url: string) => Object.keys(await categoriesOf(url)).map(Number);
+  assert.deepEqual(await ids('/v2/products?category=clothing'), [1, 3, 4]);
+  assert.deepEqual(await ids('/v2/products?category=GIFTS'), [2, 4]);
+  assert.deepEqual(await ids('/v2/products?category=toys'), []);
+  const cheap = await (
+    await app.request('/v2/products?category=Clothing&maxCents=2000&sort=-price')
   ).json();
   assert.deepEqual(
-    baratos.map((producto: { nombre: string }) => producto.nombre),
-    ['Camiseta', 'Gorra'],
+    cheap.map((product: { name: string }) => product.name),
+    ['T-shirt', 'Cap'],
   );
 });
 
-test('un valor raro en ?categoria= es solo un valor: no cambia la consulta', async () => {
+test('an odd value in ?category= is only a value: it does not change the query', async () => {
   assert.deepEqual(
-    await categoriasDe(`/v2/productos?categoria=${encodeURIComponent("x' OR '1'='1")}`),
+    await categoriesOf(`/v2/products?category=${encodeURIComponent("x' OR '1'='1")}`),
     {},
   );
-  const vacia = await app.request('/v2/productos?categoria=');
-  assert.equal(vacia.status, 422);
-  assert.deepEqual((await vacia.json()).errores, [
-    { campo: 'categoria', problema: 'No puede estar vacío' },
-  ]);
+  const empty = await app.request('/v2/products?category=');
+  assert.equal(empty.status, 422);
+  assert.deepEqual((await empty.json()).errors, [{ field: 'category', problem: "Can't be empty" }]);
 });
 
-test('v1 no cambia: ni categorías ni filtro por categoría', async () => {
-  assert.deepEqual(await (await app.request('/v1/productos/2')).json(), {
+test('v1 does not change: no categories and no category filter', async () => {
+  assert.deepEqual(await (await app.request('/v1/products/2')).json(), {
     id: 2,
-    nombre: 'Taza',
-    precio: 8.5,
+    name: 'Mug',
+    price: 8.5,
   });
-  const todos = await (await app.request('/v1/productos?categoria=hogar')).json();
-  assert.equal(todos.length, 4);
+  const all = await (await app.request('/v1/products?category=home')).json();
+  assert.equal(all.length, 4);
 });
 
-test('el contrato documenta las categorías y el filtro', async () => {
+test('the contract documents the categories and the filter', async () => {
   const doc = await (await app.request('/v2/openapi.json')).json();
-  const producto = doc.components.schemas.Producto;
-  assert.equal(producto.properties.categorias.type, 'array');
-  assert.ok(producto.required.includes('categorias'));
-  const filtros = doc.paths['/productos'].get.parameters.map((p: { name: string }) => p.name);
-  assert.ok(filtros.includes('categoria'));
+  const product = doc.components.schemas.Product;
+  assert.equal(product.properties.categories.type, 'array');
+  assert.ok(product.required.includes('categories'));
+  const filters = doc.paths['/products'].get.parameters.map((p: { name: string }) => p.name);
+  assert.ok(filters.includes('category'));
 });
 
-test('ejemplos/n-mas-uno.ts: N+1 consultas frente a una sola, con el mismo resultado', async () => {
-  const { stdout } = await ejecutar('node', ['ejemplos/n-mas-uno.ts']);
-  const [nMasUno, unaSola] = stdout.split(/^== /m).slice(1);
-  // Una para los productos y una más por cada uno de los 4.
-  assert.match(nMasUno!, /^Consultas a la base de datos: 5$/m);
-  assert.match(unaSola!, /^Consultas a la base de datos: 1$/m);
-  const resultado = /^Resultado: (.*)$/m;
-  assert.equal(nMasUno!.match(resultado)![1], unaSola!.match(resultado)![1]);
+test('examples/n-plus-one.ts: N+1 queries versus a single one, with the same result', async () => {
+  const { stdout } = await run('node', ['examples/n-plus-one.ts']);
+  const [nPlusOne, single] = stdout.split(/^== /m).slice(1);
+  // One for the products and one more for each of the 4.
+  assert.match(nPlusOne!, /^Database queries: 5$/m);
+  assert.match(single!, /^Database queries: 1$/m);
+  const result = /^Result: (.*)$/m;
+  assert.equal(nPlusOne!.match(result)![1], single!.match(result)![1]);
 });
 
-test('la migración 004, que generó drizzle-kit, crea el índice por categoría', async () => {
+test('migration 004, which drizzle-kit generated, creates the index by category', async () => {
   const { rows } = await pool.query(
-    `SELECT indexdef FROM pg_indexes WHERE indexname = 'productos_categorias_por_categoria'`,
+    `SELECT indexdef FROM pg_indexes WHERE indexname = 'product_categories_by_category'`,
   );
-  assert.match(rows[0].indexdef, /ON public\.productos_categorias USING btree \(categoria_id\)$/);
+  assert.match(rows[0].indexdef, /ON public\.product_categories USING btree \(category_id\)$/);
 });
 
-test('drizzle-kit no ve cambios pendientes: src/esquema.ts y sus migraciones están al día', async () => {
-  const { stdout } = await ejecutar('npx', ['drizzle-kit', 'generate']);
+test('drizzle-kit sees no pending changes: src/schema.ts and its migrations are up to date', async () => {
+  const { stdout } = await run('npx', ['drizzle-kit', 'generate']);
   assert.match(stdout, /No schema changes, nothing to migrate/);
 });

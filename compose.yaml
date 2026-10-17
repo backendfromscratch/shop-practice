@@ -1,37 +1,38 @@
-# La tienda entera con un comando (Fase 7, lección 7): la API, PostgreSQL y Redis, cada uno en su
-# contenedor, en una red propia en la que se encuentran por el nombre del servicio (db, redis).
-#   docker compose up --build    arranca todo (Ctrl + C lo para)
-#   docker compose down          lo para y borra los contenedores; con -v, también los datos
+# The whole shop with one command (Phase 7, lesson 7): the API, PostgreSQL and Redis, each in its
+# own container, on a network of their own where they find each other by the service name (db,
+# redis).
+#   docker compose up --build    starts everything (Ctrl + C stops it)
+#   docker compose down          stops it and deletes the containers; with -v, the data too
 #
-# Los secretos no se escriben aquí: este fichero va a Git. Llegan de tu .env, que Compose lee solo
-# (cópialo de .env.ejemplo): ${POSTGRES_PASSWORD} se sustituye por su valor.
+# The secrets aren't written here: this file goes to Git. They come from your .env, which Compose
+# reads on its own (copy it from .env.example): ${POSTGRES_PASSWORD} is replaced with its value.
 
-# El nombre del proyecto: los contenedores se llaman tienda-api-1, tienda-db-1…
-name: tienda
+# The project's name: the containers are called shop-api-1, shop-db-1…
+name: shop
 
 services:
-  # PostgreSQL 18, fijada por su digest. Sin puerto publicado: solo la ven los contenedores de la
-  # tienda, y no choca con el PostgreSQL de tu ordenador (el 5432).
+  # PostgreSQL 18, pinned by its digest. No published port: only the shop's containers see it, and
+  # it doesn't clash with the PostgreSQL on your computer (5432).
   db:
     image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
-    # La imagen crea el usuario y la base de datos la primera vez que arranca con el volumen vacío.
+    # The image creates the user and the database the first time it starts with the volume empty.
     environment:
-      POSTGRES_USER: tienda
-      POSTGRES_DB: tienda
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (mira .env.ejemplo)}
-    # Los datos, en un volumen con nombre: sobreviven a docker compose down (no a down -v).
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing in .env (see .env.example)}
+    # The data, in a named volume: it survives docker compose down (not down -v).
     volumes:
-      - datos:/var/lib/postgresql
-    # Sano cuando acepta conexiones: hasta entonces, quien depende de él espera.
+      - data:/var/lib/postgresql
+    # Healthy when it accepts connections: until then, whoever depends on it waits.
     healthcheck:
-      test: ['CMD', 'pg_isready', '-U', 'tienda', '-d', 'tienda']
+      test: ['CMD', 'pg_isready', '-U', 'shop', '-d', 'shop']
       interval: 2s
       timeout: 5s
       retries: 15
 
-  # Redis 8, fijada por su digest: los intentos de los límites, compartidos por todas las copias de
-  # la API. Sin puerto publicado, como db. Sin guardar nada en disco: si se reinicia, los intentos se
-  # olvidan, y no pasa nada.
+  # Redis 8, pinned by its digest: the attempts of the limits, shared by all the copies of the API.
+  # No published port, like db. Without saving anything to disk: if it restarts, the attempts are
+  # forgotten, and nothing happens.
   redis:
     image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
     command: ['redis-server', '--save', '', '--appendonly', 'no']
@@ -41,41 +42,42 @@ services:
       timeout: 5s
       retries: 15
 
-  # Una tarea, no un servidor: aplica las migraciones, carga los datos de práctica (las cuentas
-  # siempre; los productos, solo si no hay ninguno) y termina. Con la imagen de la API.
-  migrar:
+  # A task, not a server: it applies the migrations, loads the practice data (the accounts always;
+  # the products, only if there are none) and ends. With the API's image.
+  migrate:
     build: .
-    command: ['sh', '-c', 'node scripts/migrar.ts && node scripts/cargar-datos.ts']
+    command: ['sh', '-c', 'node scripts/migrate.ts && node scripts/seed.ts']
     environment:
-      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
     depends_on:
       db:
         condition: service_healthy
-    # El HEALTHCHECK de la imagen pregunta a la API, y aquí no hay API.
+    # The image's HEALTHCHECK asks the API, and there's no API here.
     healthcheck:
       disable: true
 
-  # La API, construida con el Dockerfile de esta carpeta.
+  # The API, built with this folder's Dockerfile.
   api:
     build: .
-    # Tu configuración (los secretos, el proveedor de identidad…), de .env. Lo que cambia dentro de
-    # Compose va en environment, que manda sobre env_file: la base de datos y Redis, por su nombre.
+    # Your configuration (the secrets, the identity provider…), from .env. What changes inside
+    # Compose goes in environment, which wins over env_file: the database and Redis, by their name.
     env_file: .env
     environment:
-      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
       REDIS_URL: redis://redis:6379
-    # Solo en tu ordenador (127.0.0.1). Un rango, y no un puerto: con docker compose up --scale
-    # api=2, cada copia toma uno libre, el 3000 o el 3001 (docker compose ps dice cuál).
+    # Only on your computer (127.0.0.1). A range, and not a port: with docker compose up --scale
+    # api=2, each copy takes a free one, 3000 or 3001 (docker compose ps says which).
     ports:
       - '127.0.0.1:3000-3001:3000'
-    # No arranca hasta que la base de datos y Redis están sanos y las migraciones han terminado bien.
+    # It doesn't start until the database and Redis are healthy and the migrations have finished
+    # well.
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrar:
+      migrate:
         condition: service_completed_successfully
 
 volumes:
-  datos:
+  data:

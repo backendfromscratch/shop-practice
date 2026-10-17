@@ -2,66 +2,66 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { comprobar, crearToken, leerPartes, manipular, sinFirma } from '../ejemplos/jwt.ts';
+import { check, createToken, readParts, tamper, unsigned } from '../examples/jwt.ts';
 
-// ejemplos/jwt.ts no usa la base de datos: estos tests tampoco.
-const ejecutar = promisify(execFile);
+// examples/jwt.ts doesn't use the database: these tests don't either.
+const run = promisify(execFile);
 
-test('un JWT son tres partes en base64url; cabecera y datos se leen sin el secreto', async () => {
-  const token = await crearToken('carmen');
+test('a JWT is three parts in base64url; header and payload can be read without the secret', async () => {
+  const token = await createToken('carmen');
   assert.match(token, /^[\w-]+\.[\w-]+\.[\w-]+$/);
-  const { cabecera, datos, bytesDeFirma } = leerPartes(token);
-  assert.deepEqual(cabecera, { alg: 'HS256', typ: 'JWT' });
-  assert.equal(datos.sub, 'carmen');
-  assert.equal(datos.iss, 'tienda-api');
-  assert.equal(datos.aud, 'tienda-api');
-  assert.equal(datos.exp - datos.iat, 15 * 60);
-  assert.equal(bytesDeFirma, 32); // un HMAC-SHA256
+  const { header, payload, signatureBytes } = readParts(token);
+  assert.deepEqual(header, { alg: 'HS256', typ: 'JWT' });
+  assert.equal(payload.sub, 'carmen');
+  assert.equal(payload.iss, 'shop-api');
+  assert.equal(payload.aud, 'shop-api');
+  assert.equal(payload.exp - payload.iat, 15 * 60);
+  assert.equal(signatureBytes, 32); // an HMAC-SHA256
 });
 
-test('comprobar: el token tal cual vale, y da sus datos', async () => {
-  const resultado = await comprobar(await crearToken('carmen'));
-  assert.equal(resultado.valido, true);
-  assert.equal(resultado.valido && resultado.datos.sub, 'carmen');
+test('check: the token as is is valid, and gives its payload', async () => {
+  const result = await check(await createToken('carmen'));
+  assert.equal(result.valid, true);
+  assert.equal(result.valid && result.payload.sub, 'carmen');
 });
 
-test('con los datos cambiados, la firma ya no corresponde: rechazado', async () => {
-  const cambiado = manipular(await crearToken('carmen'), 'pablo');
-  assert.equal(leerPartes(cambiado).datos.sub, 'pablo');
-  assert.deepEqual(await comprobar(cambiado), {
-    valido: false,
-    motivo: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+test('with the payload changed, the signature no longer matches: rejected', async () => {
+  const changed = tamper(await createToken('carmen'), 'pablo');
+  assert.equal(readParts(changed).payload.sub, 'pablo');
+  assert.deepEqual(await check(changed), {
+    valid: false,
+    reason: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
   });
 });
 
-test('alg: none y sin firma: rechazado, porque el algoritmo lo decide quien comprueba', async () => {
-  const resultado = await comprobar(sinFirma(await crearToken('carmen')));
-  assert.equal(resultado.valido, false);
-  assert.equal(resultado.valido || resultado.motivo, 'ERR_JOSE_ALG_NOT_ALLOWED');
+test('alg: none and no signature: rejected, because the algorithm is decided by whoever checks', async () => {
+  const result = await check(unsigned(await createToken('carmen')));
+  assert.equal(result.valid, false);
+  assert.equal(result.valid || result.reason, 'ERR_JOSE_ALG_NOT_ALLOWED');
 });
 
-test('caducado, o para otra audiencia: rechazado', async () => {
-  const caducado = await crearToken('carmen', 'tienda-api', Math.floor(Date.now() / 1000) - 60);
-  assert.deepEqual(await comprobar(caducado), { valido: false, motivo: 'ERR_JWT_EXPIRED' });
-  const otraAudiencia = await crearToken('carmen', 'pasarela-de-pago');
-  assert.deepEqual(await comprobar(otraAudiencia), {
-    valido: false,
-    motivo: 'ERR_JWT_CLAIM_VALIDATION_FAILED',
+test('expired, or for another audience: rejected', async () => {
+  const expired = await createToken('carmen', 'shop-api', Math.floor(Date.now() / 1000) - 60);
+  assert.deepEqual(await check(expired), { valid: false, reason: 'ERR_JWT_EXPIRED' });
+  const otherAudience = await createToken('carmen', 'payment-gateway');
+  assert.deepEqual(await check(otherAudience), {
+    valid: false,
+    reason: 'ERR_JWT_CLAIM_VALIDATION_FAILED',
   });
-  // El mismo token sí vale para quien es su audiencia.
-  assert.equal((await comprobar(otraAudiencia, 'pasarela-de-pago')).valido, true);
+  // The same token is valid for whoever is its audience.
+  assert.equal((await check(otherAudience, 'payment-gateway')).valid, true);
 });
 
-test('node ejemplos/jwt.ts: enseña las partes y qué se rechaza', async () => {
-  const { stdout } = await ejecutar('node', ['ejemplos/jwt.ts']);
-  assert.match(stdout, /^Cabecera: \{ alg: 'HS256', typ: 'JWT' \}$/m);
-  assert.match(stdout, /^Firma: 32 bytes$/m);
-  assert.match(stdout, /^Tal cual: vale$/m);
+test('node examples/jwt.ts: shows the parts and what is rejected', async () => {
+  const { stdout } = await run('node', ['examples/jwt.ts']);
+  assert.match(stdout, /^Header: \{ alg: 'HS256', typ: 'JWT' \}$/m);
+  assert.match(stdout, /^Signature: 32 bytes$/m);
+  assert.match(stdout, /^As is: valid$/m);
   assert.match(
     stdout,
-    /^Con los datos cambiados: rechazado \(ERR_JWS_SIGNATURE_VERIFICATION_FAILED\)$/m,
+    /^With the payload changed: rejected \(ERR_JWS_SIGNATURE_VERIFICATION_FAILED\)$/m,
   );
-  assert.match(stdout, /^Con alg: none y sin firma: rechazado \(ERR_JOSE_ALG_NOT_ALLOWED\)$/m);
-  assert.match(stdout, /^Caducado hace un minuto: rechazado \(ERR_JWT_EXPIRED\)$/m);
-  assert.match(stdout, /^Para otra audiencia: rechazado \(ERR_JWT_CLAIM_VALIDATION_FAILED\)$/m);
+  assert.match(stdout, /^With alg: none and no signature: rejected \(ERR_JOSE_ALG_NOT_ALLOWED\)$/m);
+  assert.match(stdout, /^Expired a minute ago: rejected \(ERR_JWT_EXPIRED\)$/m);
+  assert.match(stdout, /^For another audience: rejected \(ERR_JWT_CLAIM_VALIDATION_FAILED\)$/m);
 });

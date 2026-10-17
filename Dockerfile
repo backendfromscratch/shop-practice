@@ -1,56 +1,55 @@
-# La imagen de la API de la tienda, pequeña y segura (Fase 7, lección 4). Constrúyela con:
-#   docker build -t tienda-api .
-# compose.yaml la construye también (lección 7), para la API y para el servicio migrar.
+# The image of the shop's API, small and safe (Phase 7, lesson 4). Build it with:
+#   docker build -t shop-api .
+# compose.yaml builds it too (lesson 7), for the API and for the migrate service.
 #
-# Tres etapas, cada una desde su FROM: las dos primeras instalan y comprueban, y solo la última se
-# convierte en la imagen. Lo que necesitan las primeras (TypeScript, la caché de npm, los tests) se
-# queda en ellas.
+# Three stages, each from its own FROM: the first two install and check, and only the last one
+# becomes the image. What the first ones need (TypeScript, npm's cache, the tests) stays in them.
 #
-# Tamaños, medidos el 2026-10-14 con docker image ls (CONTENT SIZE: lo que se descarga, comprimido;
-# entre paréntesis, lo que ocupa descomprimida, la suma de docker history):
-#   la imagen de la lección 3, de una sola etapa:              145 MB (451 MB)
-#   la de la lección 4, sobre node:26-slim:                     92 MB (343 MB)
-#   la misma etapa final sobre node:26-alpine:                  74 MB (243 MB)
-#   y sobre distroless (gcr.io/distroless/nodejs26-debian13):   66 MB (244 MB)
-#   esta, con Redis y las migraciones (sobre node:26-slim):     93 MB (359 MB)
-# slim, y no alpine ni distroless: alpine usa otra biblioteca de C (musl) con la que algún paquete
-# con código nativo falla, y distroless no trae ni una shell para mirar dentro del contenedor.
+# Sizes, measured on 2026-10-14 with docker image ls (CONTENT SIZE: what's downloaded, compressed;
+# in parentheses, what it takes up uncompressed, the sum of docker history):
+#   the image from lesson 3, with a single stage:              145 MB (451 MB)
+#   the one from lesson 4, on node:26-slim:                     92 MB (343 MB)
+#   the same final stage on node:26-alpine:                     74 MB (243 MB)
+#   and on distroless (gcr.io/distroless/nodejs26-debian13):    66 MB (244 MB)
+#   this one, with Redis and the migrations (on node:26-slim):  93 MB (359 MB)
+# slim, and not alpine or distroless: alpine uses another C library (musl) that some package with
+# native code fails with, and distroless doesn't even bring a shell to look inside the container.
 
-# Etapa 1, dependencias: todas, también las de desarrollo (TypeScript, para comprobar los tipos).
-# node:26-slim, fijada por su digest.
-FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS dependencias
+# Stage 1, dependencies: all of them, the development ones too (TypeScript, to check the types).
+# node:26-slim, pinned by its digest.
+FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS dependencies
 WORKDIR /app
-# .npmrc también: sin él, npm ci ejecutaría los scripts de instalación de los paquetes.
+# .npmrc too: without it, npm ci would run the packages' install scripts.
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
-# Etapa 2, comprobar: parte de la anterior, copia el código y comprueba los tipos. Si un tipo
-# falla, la imagen no se construye. Los tests no se pasan aquí: necesitan PostgreSQL.
-FROM dependencias AS comprobar
+# Stage 2, check: starts from the previous one, copies the code and checks the types. If a type
+# fails, the image isn't built. The tests don't run here: they need PostgreSQL.
+FROM dependencies AS check
 COPY . .
 RUN npm run check
 
-# Etapa 3, la imagen final: desde node:26-slim otra vez, limpia, con solo lo que hace falta para
-# ejecutar la API.
+# Stage 3, the final image: from node:26-slim again, clean, with only what's needed to run the
+# API.
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS final
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
-# Solo las dependencias de producción (--omit=dev: sin TypeScript ni drizzle-kit), y sin la caché
-# que npm deja al instalar.
+# Only the production dependencies (--omit=dev: without TypeScript or drizzle-kit), and without the
+# cache npm leaves behind when installing.
 RUN npm ci --omit=dev && npm cache clean --force
-# El código, de la etapa comprobar, no del proyecto: BuildKit se salta las etapas de las que la
-# final no toma nada, y entonces los tipos no se comprobarían nunca.
-COPY --from=comprobar /app/src ./src
-# Las migraciones y los datos de práctica, con sus scripts: el servicio migrar de compose.yaml usa
-# esta misma imagen, y crear-admin (Fase 8) se ejecuta dentro de ella, en el servidor.
-COPY --from=comprobar /app/bd ./bd
-COPY --from=comprobar /app/scripts/migrar.ts /app/scripts/cargar-datos.ts /app/scripts/crear-admin.ts ./scripts/
+# The code, from the check stage, not from the project: BuildKit skips the stages the final one
+# takes nothing from, and then the types would never be checked.
+COPY --from=check /app/src ./src
+# The migrations and the practice data, with their scripts: compose.yaml's migrate service uses this
+# same image, and create-admin (Phase 8) runs inside it, on the server.
+COPY --from=check /app/db ./db
+COPY --from=check /app/scripts/migrate.ts /app/scripts/seed.ts /app/scripts/create-admin.ts ./scripts/
 ENV NODE_ENV=production HOST=0.0.0.0
-# No como root: node es un usuario sin privilegios que trae la imagen. Si alguien se cuela en la
-# API, no puede cambiar su código (es de root) ni instalar nada.
+# Not as root: node is an unprivileged user that comes with the image. If someone breaks into the
+# API, they can't change its code (it belongs to root) or install anything.
 USER node
 EXPOSE 3000
-# Cada 10 segundos, Docker pregunta a /salud si la tienda está bien, y docker ps lo enseña: healthy
-# o unhealthy. La imagen no trae curl, así que pregunta con el fetch de Node.
-HEALTHCHECK --interval=10s --timeout=3s CMD ["node", "-e", "fetch('http://127.0.0.1:3000/salud').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-CMD ["node", "src/servidor.ts"]
+# Every 10 seconds, Docker asks /health whether the shop is fine, and docker ps shows it: healthy
+# or unhealthy. The image doesn't bring curl, so it asks with Node's fetch.
+HEALTHCHECK --interval=10s --timeout=3s CMD ["node", "-e", "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+CMD ["node", "src/server.ts"]

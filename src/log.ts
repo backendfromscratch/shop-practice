@@ -1,4 +1,4 @@
-// Los logs, en JSON: una línea por suceso, que una persona puede leer y un programa también.
+// The logs, in JSON: one line per event, which a person can read and so can a program.
 import { pino } from 'pino';
 import { config } from './config.ts';
 

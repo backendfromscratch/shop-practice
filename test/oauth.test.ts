@@ -1,142 +1,141 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { pool } from '../src/bd.ts';
-import { arrancarProveedor, MARTA } from '../scripts/proveedor.ts';
-import { usarBd } from './bd.ts';
+import { pool } from '../src/db.ts';
+import { MARTA, startProvider } from '../scripts/provider.ts';
+import { useDb } from './db.ts';
 
-usarBd();
+useDb();
 
-// El proveedor de práctica, aquí mismo, en un puerto libre de 127.0.0.1: nada sale del ordenador.
-// persona es quien «inicia sesión» en él; cada test la cambia si necesita otra.
-const persona: Record<string, unknown> = { ...MARTA };
-const proveedor = await arrancarProveedor(0, '127.0.0.1', persona);
-proveedor.issuer.url = `http://127.0.0.1:${proveedor.address().port}`;
-after(() => proveedor.stop());
+// The practice provider, right here, on a free port of 127.0.0.1: nothing leaves the computer.
+// person is whoever "signs in" at it; each test changes it if it needs another one.
+const person: Record<string, unknown> = { ...MARTA };
+const provider = await startProvider(0, '127.0.0.1', person);
+provider.issuer.url = `http://127.0.0.1:${provider.address().port}`;
+after(() => provider.stop());
 
-// La tienda lee OIDC_EMISOR al arrancar: primero se cambia, después se importa la app.
-process.env.OIDC_EMISOR = proveedor.issuer.url;
+// The shop reads OIDC_ISSUER when it starts: first it's changed, then the app is imported.
+process.env.OIDC_ISSUER = provider.issuer.url;
 const { app } = await import('../src/app.ts');
 
-/** La primera cookie de una cabecera Set-Cookie, como «nombre=valor». */
-const cookieDe = (res: Response, nombre: string) =>
-  new RegExp(`(?:^|, )(${nombre}=[^;]*)`).exec(res.headers.get('set-cookie') ?? '')?.[1];
+/** The first cookie in a Set-Cookie header, as "name=value". */
+const cookieOf = (res: Response, name: string) =>
+  new RegExp(`(?:^|, )(${name}=[^;]*)`).exec(res.headers.get('set-cookie') ?? '')?.[1];
 
 /**
- * El flujo entero, siguiendo cada redirección a mano, como haría el navegador: la tienda manda al
- * proveedor, el proveedor devuelve a la tienda con un código, y la tienda inicia la sesión.
+ * The whole flow, following each redirect by hand, as the browser would: the shop sends to the
+ * provider, the provider sends back to the shop with a code, and the shop opens the session.
  */
-async function iniciarConProveedor() {
-  const ida = await app.request('/v2/sesion/proveedor');
-  const alProveedor = new URL(ida.headers.get('location')!);
-  const inicio = cookieDe(ida, 'proveedor')!;
-  const delProveedor = await fetch(alProveedor, { redirect: 'manual' });
-  const deVuelta = new URL(delProveedor.headers.get('location')!);
-  const rutaDeVuelta = deVuelta.pathname + deVuelta.search;
-  const vuelta = await app.request(rutaDeVuelta, { headers: { Cookie: inicio } });
-  return { ida, alProveedor, inicio, rutaDeVuelta, vuelta };
+async function signInWithProvider() {
+  const start = await app.request('/v2/session/provider');
+  const toProvider = new URL(start.headers.get('location')!);
+  const startCookie = cookieOf(start, 'provider')!;
+  const fromProvider = await fetch(toProvider, { redirect: 'manual' });
+  const back = new URL(fromProvider.headers.get('location')!);
+  const callbackPath = back.pathname + back.search;
+  const callback = await app.request(callbackPath, { headers: { Cookie: startCookie } });
+  return { start, toProvider, startCookie, callbackPath, callback };
 }
 
-const yo = async (vuelta: Response) =>
-  (await app.request('/v2/yo', { headers: { Cookie: cookieDe(vuelta, 'sesion')! } })).json();
+const me = async (callback: Response) =>
+  (await app.request('/v2/me', { headers: { Cookie: cookieOf(callback, 'session')! } })).json();
 
-test('la ida: al proveedor, con el código de autorización, PKCE S256, state y nonce', async () => {
-  const ida = await app.request('/v2/sesion/proveedor');
-  assert.equal(ida.status, 302);
-  const url = new URL(ida.headers.get('location')!);
-  assert.equal(url.origin + url.pathname, `${proveedor.issuer.url}/authorize`);
-  const parametros = Object.fromEntries(url.searchParams);
-  assert.equal(parametros.response_type, 'code');
-  assert.equal(parametros.client_id, 'tienda');
-  assert.equal(parametros.redirect_uri, 'http://localhost:3000/v2/sesion/proveedor/vuelta');
-  assert.equal(parametros.scope, 'openid email profile');
-  assert.equal(parametros.code_challenge_method, 'S256');
-  assert.match(parametros.code_challenge!, /^[\w-]{43}$/);
-  assert.ok(parametros.state && parametros.nonce);
-  const cookie = ida.headers.get('set-cookie')!;
+test('the way out: to the provider, with the authorization code, PKCE S256, state and nonce', async () => {
+  const start = await app.request('/v2/session/provider');
+  assert.equal(start.status, 302);
+  const url = new URL(start.headers.get('location')!);
+  assert.equal(url.origin + url.pathname, `${provider.issuer.url}/authorize`);
+  const parameters = Object.fromEntries(url.searchParams);
+  assert.equal(parameters.response_type, 'code');
+  assert.equal(parameters.client_id, 'shop');
+  assert.equal(parameters.redirect_uri, 'http://localhost:3000/v2/session/provider/callback');
+  assert.equal(parameters.scope, 'openid email profile');
+  assert.equal(parameters.code_challenge_method, 'S256');
+  assert.match(parameters.code_challenge!, /^[\w-]{43}$/);
+  assert.ok(parameters.state && parameters.nonce);
+  const cookie = start.headers.get('set-cookie')!;
   assert.match(
     cookie,
-    /^proveedor=[\w-]+; Max-Age=600; Path=\/v2\/sesion\/proveedor; HttpOnly; Secure; SameSite=Lax$/,
+    /^provider=[\w-]+; Max-Age=600; Path=\/v2\/session\/provider; HttpOnly; Secure; SameSite=Lax$/,
   );
-  // El verificador de PKCE va en la cookie, nunca en la URL.
+  // The PKCE verifier goes in the cookie, never in the URL.
   assert.ok(
     !url.href.includes(
-      JSON.parse(Buffer.from(cookie.split(/[=;]/)[1]!, 'base64url').toString()).verificador,
+      JSON.parse(Buffer.from(cookie.split(/[=;]/)[1]!, 'base64url').toString()).verifier,
     ),
   );
 });
 
-test('el flujo entero: Marta vuelve con un código, se crea su cuenta sin contraseña y tiene sesión', async () => {
-  const { vuelta } = await iniciarConProveedor();
-  assert.equal(vuelta.status, 303);
-  assert.equal(vuelta.headers.get('location'), '/v2/yo');
-  assert.match(vuelta.headers.get('set-cookie')!, /proveedor=; Max-Age=0/);
-  const cuenta = await yo(vuelta);
-  assert.equal(cuenta.tipo, 'usuario');
-  assert.equal(cuenta.email, 'marta@ejemplo.com');
-  const { rows } = await pool.query(
-    'SELECT hash_contrasena, sub_proveedor FROM usuarios WHERE id = $1',
-    [cuenta.id],
-  );
-  assert.deepEqual(rows[0], { hash_contrasena: null, sub_proveedor: 'proveedor-marta-0001' });
+test('the whole flow: Marta comes back with a code, her account is created without a password and she has a session', async () => {
+  const { callback } = await signInWithProvider();
+  assert.equal(callback.status, 303);
+  assert.equal(callback.headers.get('location'), '/v2/me');
+  assert.match(callback.headers.get('set-cookie')!, /provider=; Max-Age=0/);
+  const account = await me(callback);
+  assert.equal(account.type, 'user');
+  assert.equal(account.email, 'marta@example.com');
+  const { rows } = await pool.query('SELECT password_hash, provider_sub FROM users WHERE id = $1', [
+    account.id,
+  ]);
+  assert.deepEqual(rows[0], { password_hash: null, provider_sub: 'provider-marta-0001' });
 
-  // La segunda vez, la misma cuenta: se la reconoce por el sub.
-  const otraVez = await iniciarConProveedor();
-  assert.equal((await yo(otraVez.vuelta)).id, cuenta.id);
+  // The second time, the same account: it's recognized by the sub.
+  const again = await signInWithProvider();
+  assert.equal((await me(again.callback)).id, account.id);
 });
 
-test('un email verificado que ya tiene cuenta: se une a ella; sin verificar, 409 y no se une', async () => {
-  Object.assign(persona, {
-    sub: 'proveedor-carmen',
-    email: 'Carmen@ejemplo.com',
+test('a verified email that already has an account: it is linked to it; unverified, 409 and not linked', async () => {
+  Object.assign(person, {
+    sub: 'provider-carmen',
+    email: 'Carmen@example.com',
     email_verified: false,
   });
-  const sinVerificar = await iniciarConProveedor();
-  assert.equal(sinVerificar.vuelta.status, 409);
+  const unverified = await signInWithProvider();
+  assert.equal(unverified.callback.status, 409);
   assert.equal(
-    (await sinVerificar.vuelta.json()).type,
-    'https://tienda.example/problemas/email-sin-verificar',
+    (await unverified.callback.json()).type,
+    'https://shop.example/problems/email-not-verified',
   );
-  assert.equal(cookieDe(sinVerificar.vuelta, 'sesion'), undefined);
+  assert.equal(cookieOf(unverified.callback, 'session'), undefined);
 
-  persona.email_verified = true;
-  const verificado = await iniciarConProveedor();
-  assert.equal(verificado.vuelta.status, 303);
-  assert.deepEqual(await yo(verificado.vuelta), {
-    tipo: 'usuario',
+  person.email_verified = true;
+  const verified = await signInWithProvider();
+  assert.equal(verified.callback.status, 303);
+  assert.deepEqual(await me(verified.callback), {
+    type: 'user',
     id: 3,
-    email: 'carmen@ejemplo.com',
-    rol: 'cliente',
+    email: 'carmen@example.com',
+    role: 'customer',
   });
-  const { rows } = await pool.query('SELECT sub_proveedor FROM usuarios WHERE id = 3');
-  assert.equal(rows[0].sub_proveedor, 'proveedor-carmen');
-  Object.assign(persona, MARTA);
+  const { rows } = await pool.query('SELECT provider_sub FROM users WHERE id = 3');
+  assert.equal(rows[0].provider_sub, 'provider-carmen');
+  Object.assign(person, MARTA);
 });
 
-test('un state cambiado: 400, y ni sesión ni cuenta', async () => {
-  const ida = await app.request('/v2/sesion/proveedor');
-  const delProveedor = await fetch(ida.headers.get('location')!, { redirect: 'manual' });
-  const deVuelta = new URL(delProveedor.headers.get('location')!);
-  deVuelta.searchParams.set('state', 'un-state-de-otro-navegador');
-  const vuelta = await app.request(deVuelta.pathname + deVuelta.search, {
-    headers: { Cookie: cookieDe(ida, 'proveedor')! },
+test('a changed state: 400, and neither session nor account', async () => {
+  const start = await app.request('/v2/session/provider');
+  const fromProvider = await fetch(start.headers.get('location')!, { redirect: 'manual' });
+  const back = new URL(fromProvider.headers.get('location')!);
+  back.searchParams.set('state', 'a-state-from-another-browser');
+  const callback = await app.request(back.pathname + back.search, {
+    headers: { Cookie: cookieOf(start, 'provider')! },
   });
-  assert.equal(vuelta.status, 400);
-  assert.equal((await vuelta.json()).type, 'https://tienda.example/problemas/inicio-con-proveedor');
-  assert.equal(cookieDe(vuelta, 'sesion'), undefined);
+  assert.equal(callback.status, 400);
+  assert.equal((await callback.json()).type, 'https://shop.example/problems/provider-sign-in');
+  assert.equal(cookieOf(callback, 'session'), undefined);
 });
 
-test('el mismo código otra vez, aunque se repita la cookie: el proveedor ya lo gastó, 400', async () => {
-  const { inicio, rutaDeVuelta, vuelta } = await iniciarConProveedor();
-  assert.equal(vuelta.status, 303);
-  const repetida = await app.request(rutaDeVuelta, { headers: { Cookie: inicio } });
-  assert.equal(repetida.status, 400);
-  assert.equal(cookieDe(repetida, 'sesion'), undefined);
+test('the same code again, even if the cookie is repeated: the provider already used it up, 400', async () => {
+  const { startCookie, callbackPath, callback } = await signInWithProvider();
+  assert.equal(callback.status, 303);
+  const repeated = await app.request(callbackPath, { headers: { Cookie: startCookie } });
+  assert.equal(repeated.status, 400);
+  assert.equal(cookieOf(repeated, 'session'), undefined);
 });
 
-test('la vuelta sin la cookie de la ida (otro navegador): 400', async () => {
-  const ida = await app.request('/v2/sesion/proveedor');
-  const delProveedor = await fetch(ida.headers.get('location')!, { redirect: 'manual' });
-  const deVuelta = new URL(delProveedor.headers.get('location')!);
-  const vuelta = await app.request(deVuelta.pathname + deVuelta.search);
-  assert.equal(vuelta.status, 400);
+test('the way back without the way-out cookie (another browser): 400', async () => {
+  const start = await app.request('/v2/session/provider');
+  const fromProvider = await fetch(start.headers.get('location')!, { redirect: 'manual' });
+  const back = new URL(fromProvider.headers.get('location')!);
+  const callback = await app.request(back.pathname + back.search);
+  assert.equal(callback.status, 400);
 });
