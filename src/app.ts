@@ -102,7 +102,7 @@ app.get('/echo', echo, (c) =>
 app.get('/health', async (c) => {
   try {
     await pool.query('SELECT 1');
-    return c.json({ status: 'ok' });
+    return c.json({ status: 'fine' });
   } catch {
     return httpProblem(c, 503, 'The database is not responding');
   }
