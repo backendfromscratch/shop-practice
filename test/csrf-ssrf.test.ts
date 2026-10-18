@@ -3,205 +3,197 @@ import { once } from 'node:events';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { otherSitePage } from '../scripts/other-site.ts';
+import { paginaDeOtraWeb } from '../scripts/otra-web.ts';
 import { app } from '../src/app.ts';
-import { findOrder } from '../src/data.ts';
-import { pool } from '../src/db.ts';
-import { notifyPayment } from '../src/notifications.ts';
-import { checkUrl, postJson, type Resolver } from '../src/safe-url.ts';
-import { sign } from '../src/signature.ts';
-import { useDb } from './db.ts';
-import { CARMEN, asDelivery, asUser } from './identities.ts';
+import { avisarDePago } from '../src/avisos.ts';
+import { pool } from '../src/bd.ts';
+import { buscarPedido } from '../src/datos.ts';
+import { firmar } from '../src/firma.ts';
+import { comprobarUrl, enviarJson, type Resolver } from '../src/url-segura.ts';
+import { usarBd } from './bd.ts';
+import { CARMEN, comoReparto, comoUsuario } from './identidades.ts';
 
-// Carmen, a customer, with her session in the cookie; and the delivery company's key.
+// Carmen, clienta, con su sesión en la cookie; y la clave de la empresa de reparto.
 let carmen: Record<string, string>;
-let delivery: Record<string, string>;
-useDb(async () => {
-  carmen = await asUser(CARMEN);
-  delivery = await asDelivery();
+let reparto: Record<string, string>;
+usarBd(async () => {
+  carmen = await comoUsuario(CARMEN);
+  reparto = await comoReparto();
 });
 
-const OTHER_SITE = 'http://127.0.0.1:4000';
+const OTRA_WEB = 'http://127.0.0.1:4000';
 
-/** A fake resolver: each name, with the addresses it's told. Nothing goes out to DNS. */
-const resolvingTo =
-  (...addresses: string[]): Resolver =>
+/** Un resolver de mentira: cada nombre, con las direcciones que se le digan. Nada sale al DNS. */
+const resolviendoA =
+  (...direcciones: string[]): Resolver =>
   async () =>
-    addresses.map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
+    direcciones.map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
 
-test("CSRF: another site's form with the session cookie: 403; from the shop, it passes", async () => {
-  const form = (headers: Record<string, string>) =>
-    app.request('/v2/orders', {
+test('CSRF: un formulario de otra web con la cookie de la sesión: 403; desde la tienda, pasa', async () => {
+  const formulario = (cabeceras: Record<string, string>) =>
+    app.request('/v2/pedidos', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         Cookie: carmen.Cookie!,
-        ...headers,
+        ...cabeceras,
       },
-      body: 'productId=1&quantity=10',
+      body: 'productoId=1&cantidad=10',
     });
-  const fromOutside = await form({ Origin: OTHER_SITE });
-  assert.equal(fromOutside.status, 403);
+  const deFuera = await formulario({ Origin: OTRA_WEB });
+  assert.equal(deFuera.status, 403);
   assert.equal(
-    (await fromOutside.json()).detail,
-    'The request comes from another site and uses your session: it is not accepted',
+    (await deFuera.json()).detail,
+    'La petición viene de otra web y usa tu sesión: no se acepta',
   );
-  // Without Origin or Sec-Fetch-Site either: there's no knowing where it comes from.
-  assert.equal((await form({})).status, 403);
-  // From the shop itself it passes the check (and the route, which expects JSON, answers 415).
-  assert.equal((await form({ Origin: 'http://localhost:3000' })).status, 415);
-  assert.equal((await form({ 'Sec-Fetch-Site': 'same-origin' })).status, 415);
-  const { rows } = await pool.query('SELECT count(*)::int AS n FROM orders WHERE quantity = 10');
-  assert.equal(rows[0].n, 0, 'no order has been placed');
+  // Sin Origin ni Sec-Fetch-Site tampoco: no se sabe de dónde viene.
+  assert.equal((await formulario({})).status, 403);
+  // Desde la propia tienda pasa la comprobación (y la ruta, que espera JSON, responde 415).
+  assert.equal((await formulario({ Origin: 'http://localhost:3000' })).status, 415);
+  assert.equal((await formulario({ 'Sec-Fetch-Site': 'same-origin' })).status, 415);
+  const { rows } = await pool.query('SELECT count(*)::int AS n FROM pedidos WHERE cantidad = 10');
+  assert.equal(rows[0].n, 0, 'no se ha hecho ningún pedido');
 });
 
-test('CSRF: cancelling with the cookie and without Origin, 403; with Bearer, which the browser does not add on its own, yes', async () => {
-  // Order 21, pending, is Carmen's.
-  const withCookie = await app.request('/v2/orders/21/cancellation', {
+test('CSRF: cancelar con la cookie y sin Origin, 403; con Bearer, que el navegador no pone solo, sí', async () => {
+  // El 21, pendiente, es de Carmen.
+  const conCookie = await app.request('/v2/pedidos/21/cancelacion', {
     method: 'POST',
     headers: { Cookie: carmen.Cookie! },
   });
-  assert.equal(withCookie.status, 403);
-  assert.equal((await findOrder(21))!.status, 'pending');
-  const id = carmen.Cookie!.replace('session=', '');
-  const withBearer = await app.request('/v2/orders/21/cancellation', {
+  assert.equal(conCookie.status, 403);
+  assert.equal((await buscarPedido(21))!.estado, 'pendiente');
+  const id = carmen.Cookie!.replace('sesion=', '');
+  const conBearer = await app.request('/v2/pedidos/21/cancelacion', {
     method: 'POST',
     headers: { Authorization: `Bearer ${id}` },
   });
-  assert.equal(withBearer.status, 200);
+  assert.equal(conBearer.status, 200);
 });
 
-test('CSRF: a POST with JSON and the cookie does pass: another site cannot send it without CORS asking', async () => {
-  const res = await app.request('/v2/orders', {
+test('CSRF: un POST con JSON y la cookie sí pasa: otra web no puede mandarlo sin que CORS lo pregunte', async () => {
+  const res = await app.request('/v2/pedidos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: carmen.Cookie! },
-    body: '{"productId":1,"quantity":1}',
+    body: '{"productoId":1,"cantidad":1}',
   });
   assert.equal(res.status, 201);
 });
 
-test('scripts/other-site.ts: the page sends a form and a fetch to the shop', async () => {
-  const page = String(await otherSitePage('http://localhost:3000'));
-  assert.match(page, /<form method="post" action="http:\/\/localhost:3000\/v2\/orders">/);
-  assert.match(page, /credentials: 'include'/);
+test('scripts/otra-web.ts: la página manda un formulario y un fetch a la tienda', async () => {
+  const pagina = String(await paginaDeOtraWeb('http://localhost:3000'));
+  assert.match(pagina, /<form method="post" action="http:\/\/localhost:3000\/v2\/pedidos">/);
+  assert.match(pagina, /credentials: 'include'/);
 });
 
-test("SSRF: http, localhost, the cloud's metadata, a name that points to 127.0.0.1, ::1… rejected", async () => {
-  const cases: [string, Resolver | undefined, RegExp][] = [
-    ['http://localhost/notifications', undefined, /https:\/\//],
+test('SSRF: http, localhost, los metadatos de la nube, un nombre que apunta a 127.0.0.1, ::1… rechazados', async () => {
+  const casos: [string, Resolver | undefined, RegExp][] = [
+    ['http://localhost/avisos', undefined, /https:\/\//],
     ['http://169.254.169.254/latest/meta-data/', undefined, /https:\/\//],
-    [
-      'https://169.254.169.254/latest/meta-data/',
-      undefined,
-      /internal address \(169\.254\.169\.254\)/,
-    ],
-    [
-      'https://notifications.trap.example/',
-      resolvingTo('127.0.0.1'),
-      /internal address \(127\.0\.0\.1\)/,
-    ],
-    ['https://half.trap.example/', resolvingTo('93.184.215.14', '10.0.0.5'), /internal/],
-    ['https://[::1]/notifications', undefined, /internal address \(::1\)/],
-    ['https://[::ffff:127.0.0.1]/', undefined, /internal/],
-    ['https://[fd00::5]/', undefined, /internal/],
-    ['https://192.168.1.1/', undefined, /internal/],
-    ['https://ana:secret@delivery.example/', undefined, /user or a password/],
-    ['not a url', undefined, /It is not a URL/],
+    ['https://169.254.169.254/latest/meta-data/', undefined, /interna \(169\.254\.169\.254\)/],
+    ['https://avisos.trampa.example/', resolviendoA('127.0.0.1'), /interna \(127\.0\.0\.1\)/],
+    ['https://mitad.trampa.example/', resolviendoA('93.184.215.14', '10.0.0.5'), /interna/],
+    ['https://[::1]/avisos', undefined, /interna \(::1\)/],
+    ['https://[::ffff:127.0.0.1]/', undefined, /interna/],
+    ['https://[fd00::5]/', undefined, /interna/],
+    ['https://192.168.1.1/', undefined, /interna/],
+    ['https://ana:secreto@reparto.example/', undefined, /usuario ni contraseña/],
+    ['no es una url', undefined, /No es una URL/],
   ];
-  for (const [url, resolver, reason] of cases) {
-    const result = await checkUrl(url, { resolver, devHosts: [] });
-    assert.ok('error' in result, url);
-    assert.match(result.error, reason, url);
+  for (const [url, resolver, motivo] of casos) {
+    const resultado = await comprobarUrl(url, { resolver, hostsDeDesarrollo: [] });
+    assert.ok('error' in resultado, url);
+    assert.match(resultado.error, motivo, url);
   }
 });
 
-test('SSRF: a public address is accepted, and it is the one that will be connected to', async () => {
-  const result = await checkUrl('https://delivery.example/notifications', {
-    resolver: resolvingTo('93.184.215.14'),
-    devHosts: [],
+test('SSRF: una dirección pública se acepta, y es a la que se conectará', async () => {
+  const resultado = await comprobarUrl('https://reparto.example/avisos', {
+    resolver: resolviendoA('93.184.215.14'),
+    hostsDeDesarrollo: [],
   });
-  assert.ok(!('error' in result));
-  assert.deepEqual(result.address, { address: '93.184.215.14', family: 4 });
-  assert.equal(result.url.href, 'https://delivery.example/notifications');
+  assert.ok(!('error' in resultado));
+  assert.deepEqual(resultado.direccion, { address: '93.184.215.14', family: 4 });
+  assert.equal(resultado.url.href, 'https://reparto.example/avisos');
 });
 
-/** A server on 127.0.0.1 that answers what it's told and records what it receives. */
-async function testServer(
-  respond: (request: IncomingMessage, body: string) => [number, Record<string, string>],
+/** Un servidor en 127.0.0.1 que responde lo que se le diga y apunta lo que recibe. */
+async function servidorDePrueba(
+  responder: (peticion: IncomingMessage, cuerpo: string) => [number, Record<string, string>],
 ) {
-  const received: { headers: IncomingMessage['headers']; body: string }[] = [];
-  const server = createServer(async (request, response) => {
-    let body = '';
-    for await (const chunk of request) body += chunk;
-    received.push({ headers: request.headers, body });
-    const [status, headers] = respond(request, body);
-    response.writeHead(status, headers).end();
+  const recibidas: { cabeceras: IncomingMessage['headers']; cuerpo: string }[] = [];
+  const servidor = createServer(async (peticion, respuesta) => {
+    let cuerpo = '';
+    for await (const trozo of peticion) cuerpo += trozo;
+    recibidas.push({ cabeceras: peticion.headers, cuerpo });
+    const [status, cabeceras] = responder(peticion, cuerpo);
+    respuesta.writeHead(status, cabeceras).end();
   });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const url = `http://localhost:${(server.address() as AddressInfo).port}/notifications`;
-  return { server, url, received };
+  servidor.listen(0, '127.0.0.1');
+  await once(servidor, 'listening');
+  const url = `http://localhost:${(servidor.address() as AddressInfo).port}/avisos`;
+  return { servidor, url, recibidas };
 }
 
-// In development, localhost is allowed (devHosts), and the name is resolved right here.
-const inDevelopment = { devHosts: ['localhost'], resolver: resolvingTo('127.0.0.1') };
+// En desarrollo, localhost se permite (hostsDeDesarrollo), y el nombre se resuelve aquí mismo.
+const enDesarrollo = { hostsDeDesarrollo: ['localhost'], resolver: resolviendoA('127.0.0.1') };
 
-test('SSRF: a redirect is not followed', async () => {
-  const { server, url } = await testServer(() => [
+test('SSRF: una redirección no se sigue', async () => {
+  const { servidor, url } = await servidorDePrueba(() => [
     302,
     { Location: 'http://169.254.169.254/latest/meta-data/' },
   ]);
   try {
-    const result = await postJson(url, '{}', {}, inDevelopment);
-    assert.deepEqual(result, { error: 'It answers 302, a redirect: it is not followed' });
+    const resultado = await enviarJson(url, '{}', {}, enDesarrollo);
+    assert.deepEqual(resultado, { error: 'Responde 302, una redirección: no se sigue' });
   } finally {
-    server.close();
+    servidor.close();
   }
 });
 
-test("a paid order's notification arrives signed at the delivery company's URL", async () => {
-  const { server, url, received } = await testServer(() => [204, {}]);
+test('el aviso de un pedido pagado llega firmado a la URL de la empresa de reparto', async () => {
+  const { servidor, url, recibidas } = await servidorDePrueba(() => [204, {}]);
   try {
-    const { rows } = await pool.query('SELECT id FROM api_keys LIMIT 1');
+    const { rows } = await pool.query('SELECT id FROM claves_api LIMIT 1');
     await pool.query(
-      `INSERT INTO notifications (key_id, url, secret) VALUES ($1, $2, 'test-secret')`,
+      `INSERT INTO avisos (clave_id, url, secreto) VALUES ($1, $2, 'secreto-de-prueba')`,
       [rows[0].id, url],
     );
-    const order = (await findOrder(13))!;
-    // Without allowing localhost, it doesn't go out: http and an internal address.
-    await notifyPayment(order, { devHosts: [] });
-    assert.equal(received.length, 0);
-    await notifyPayment(order, inDevelopment);
-    assert.equal(received.length, 1);
-    const [{ headers, body }] = received as [(typeof received)[0]];
-    assert.deepEqual(JSON.parse(body), { type: 'order.paid', order });
-    assert.equal(headers['x-signature'], sign(body, 'test-secret'));
+    const pedido = (await buscarPedido(13))!;
+    // Sin permitir localhost, no sale: http y una dirección interna.
+    await avisarDePago(pedido, { hostsDeDesarrollo: [] });
+    assert.equal(recibidas.length, 0);
+    await avisarDePago(pedido, enDesarrollo);
+    assert.equal(recibidas.length, 1);
+    const [{ cabeceras, cuerpo }] = recibidas as [(typeof recibidas)[0]];
+    assert.deepEqual(JSON.parse(cuerpo), { tipo: 'pedido.pagado', pedido });
+    assert.equal(cabeceras['x-firma'], firmar(cuerpo, 'secreto-de-prueba'));
   } finally {
-    server.close();
-    await pool.query('DELETE FROM notifications');
+    servidor.close();
+    await pool.query('DELETE FROM avisos');
   }
 });
 
-test('PUT /v2/delivery/notification: the delivery key saves a public URL; an internal one, 422', async () => {
-  const save = (headers: Record<string, string>, url: string) =>
-    app.request('/v2/delivery/notification', {
+test('PUT /v2/reparto/aviso: la clave de reparto guarda una URL pública; una interna, 422', async () => {
+  const guardar = (cabeceras: Record<string, string>, url: string) =>
+    app.request('/v2/reparto/aviso', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: { 'Content-Type': 'application/json', ...cabeceras },
       body: JSON.stringify({ url }),
     });
-  // An address written as is: there's no need to ask DNS, nor is it connected to.
-  const res = await save(delivery, 'https://93.184.215.14/notifications');
+  // Una dirección escrita tal cual: no hay que preguntar al DNS, ni se conecta a ella.
+  const res = await guardar(reparto, 'https://93.184.215.14/avisos');
   assert.equal(res.status, 200);
-  const { url, secret } = await res.json();
-  assert.equal(url, 'https://93.184.215.14/notifications');
-  assert.match(secret, /^[\w-]{43}$/);
-  const { rows } = await pool.query('SELECT url, secret FROM notifications');
-  assert.deepEqual(rows, [{ url, secret }]);
+  const { url, secreto } = await res.json();
+  assert.equal(url, 'https://93.184.215.14/avisos');
+  assert.match(secreto, /^[\w-]{43}$/);
+  const { rows } = await pool.query('SELECT url, secreto FROM avisos');
+  assert.deepEqual(rows, [{ url, secreto }]);
 
-  const internal = await save(delivery, 'https://169.254.169.254/latest/meta-data/');
-  assert.equal(internal.status, 422);
-  assert.equal((await internal.json()).errors[0].field, 'url');
-  assert.equal((await save(carmen, 'https://93.184.215.14/')).status, 403);
-  assert.equal((await save({}, 'https://93.184.215.14/')).status, 401);
-  await pool.query('DELETE FROM notifications');
+  const interna = await guardar(reparto, 'https://169.254.169.254/latest/meta-data/');
+  assert.equal(interna.status, 422);
+  assert.equal((await interna.json()).errores[0].campo, 'url');
+  assert.equal((await guardar(carmen, 'https://93.184.215.14/')).status, 403);
+  assert.equal((await guardar({}, 'https://93.184.215.14/')).status, 401);
+  await pool.query('DELETE FROM avisos');
 });

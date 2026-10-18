@@ -1,145 +1,141 @@
-// The API for Phase 6, lesson 8: accounts, sessions, API keys, signing in with an identity
-// provider, roles and permissions (permissions.ts), an HTML page of the shop (/shop) with the
-// security headers, the origin check against CSRF, the notifications to the delivery company
-// checked against SSRF (safe-url.ts), and limits on the attempts to sign in and to create
-// accounts (rate-limits.ts). GET /v2/orders/:id/events sends each change to an order (Server-Sent
-// Events), and /echo is an echo over WebSocket. In Phase 7, lesson 4, GET /health says whether the
-// shop is fine, for the image's HEALTHCHECK.
+// La API de la Fase 6, lección 8: cuentas, sesiones, claves de API, inicio de sesión con un
+// proveedor de identidad, roles y permisos (permisos.ts), una página HTML de la tienda (/tienda)
+// con las cabeceras de seguridad, la comprobación del origen contra CSRF, los avisos a la empresa
+// de reparto comprobados contra SSRF (url-segura.ts), y límites a los intentos de iniciar sesión y
+// de crear cuentas (limites.ts). GET /v2/pedidos/:id/eventos manda cada cambio de un pedido
+// (Server-Sent Events), y /eco es un eco por WebSocket. En la Fase 7, lección 4, GET /salud dice si
+// la tienda está bien, para el HEALTHCHECK de la imagen.
 import { Scalar } from '@scalar/hono-api-reference';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { requestId } from 'hono/request-id';
 import { secureHeaders } from 'hono/secure-headers';
-import { echo } from './echo.ts';
-import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { pool } from './db.ts';
-import { loadApiKey } from './middleware/api-key.ts';
-import { requestLog } from './middleware/request-log.ts';
-import { checkOrigin, loadSession } from './middleware/session.ts';
-import { dbConflict, httpProblem, problem } from './problems.ts';
-import { shop } from './shop.ts';
-import { SUNSET, v1 } from './v1.ts';
+import { pool } from './bd.ts';
+import { eco } from './eco.ts';
+import type { Entorno } from './entorno.ts';
+import { cargarClave } from './middleware/clave.ts';
+import { registro } from './middleware/registro.ts';
+import { cargarSesion, comprobarOrigen } from './middleware/sesion.ts';
+import { conflictoDeBd, problema, problemaHttp } from './problemas.ts';
+import { tienda } from './tienda.ts';
+import { RETIRADA, v1 } from './v1.ts';
 import { v2 } from './v2.ts';
 
-export const app = new Hono<Env>();
+export const app = new Hono<Entorno>();
 
-// requestId gives each request an identifier and returns it in the X-Request-Id header.
+// requestId da a cada petición un identificador y lo devuelve en la cabecera X-Request-Id.
 app.use(requestId());
-app.use(requestLog);
-app.use(cors({ origin: 'https://shop.example' }));
-// #region security-headers
-// The security headers, on every response: X-Content-Type-Options: nosniff (the browser doesn't
-// guess the type: a JSON isn't run as a script), X-Frame-Options (another site doesn't put these
-// pages in an iframe), Referrer-Policy, Strict-Transport-Security (only HTTPS, when there is)…
-// The Content Security Policy goes only on /shop (shop.ts): /docs loads its code from a CDN.
+app.use(registro);
+app.use(cors({ origin: 'https://tienda.example' }));
+// #region cabeceras-seguridad
+// Las cabeceras de seguridad, en todas las respuestas: X-Content-Type-Options: nosniff (el navegador
+// no adivina el tipo: un JSON no se ejecuta como script), X-Frame-Options (otra web no mete estas
+// páginas en un iframe), Referrer-Policy, Strict-Transport-Security (solo HTTPS, cuando lo haya)…
+// La Content Security Policy va solo en /tienda (tienda.ts): /docs carga su código de un CDN.
 app.use(secureHeaders());
-// #endregion security-headers
-// A request with the session cookie that comes from another site: 403 (CSRF, lesson 7).
-app.use(checkOrigin);
-// If the request brings a session or an API key, who it is (c.var.user or c.var.apiKey), for
-// every route.
-app.use(loadSession);
-app.use(loadApiKey);
+// #endregion cabeceras-seguridad
+// Una petición con la cookie de la sesión que viene de otra web: 403 (CSRF, lección 7).
+app.use(comprobarOrigen);
+// Si la petición trae una sesión o una clave de API, quién es (c.var.usuario o c.var.clave), para
+// todas las rutas.
+app.use(cargarSesion);
+app.use(cargarClave);
 
-// Each version, under its prefix: /v1/products and /v2/products.
+// Cada versión, bajo su prefijo: /v1/productos y /v2/productos.
 app.route('/v1', v1);
 app.route('/v2', v2);
-// The shop's HTML page (lesson 6).
-app.route('/shop', shop);
+// La página HTML de la tienda (lección 6).
+app.route('/tienda', tienda);
 
-// The root says which versions there are and the status of each one.
+// La raíz dice qué versiones hay y en qué estado está cada una.
 app.get('/', (c) =>
   c.json({
-    name: "API for Ana and Luis's shop",
-    versions: [
-      { version: 'v2', url: '/v2', status: 'current' },
-      { version: 'v1', url: '/v1', status: 'deprecated', sunset: SUNSET.toISOString() },
+    nombre: 'API de la tienda de Ana y Luis',
+    versiones: [
+      { version: 'v2', url: '/v2', estado: 'actual' },
+      { version: 'v1', url: '/v1', estado: 'obsoleta', retirada: RETIRADA.toISOString() },
     ],
   }),
 );
 
-// Version 2's contract, in OpenAPI 3.1: OpenAPIHono writes it from v2's routes and schemas.
-// servers says that the document's routes (/products) hang from /v2.
+// El contrato de la versión 2, en OpenAPI 3.1: lo escribe OpenAPIHono con las rutas y los
+// esquemas de v2. servers dice que las rutas del documento (/productos) cuelgan de /v2.
 app.get('/v2/openapi.json', (c) =>
   c.json(
     v2.getOpenAPI31Document({
       openapi: '3.1.0',
       info: {
-        title: "API for Ana and Luis's shop",
+        title: 'API de la tienda de Ana y Luis',
         version: '2.0.0',
-        description: "The shop's products and orders. Prices are in cents.",
+        description: 'Productos y pedidos de la tienda. Los precios van en céntimos.',
       },
       servers: [{ url: '/v2' }],
     }),
   ),
 );
 
-// A page that reads that contract and shows it: each route, its data and a button to try it.
-// The browser loads its code from a CDN: with the exact version, like the npm packages.
+// Una página que lee ese contrato y lo enseña: cada ruta, sus datos y un botón para probarla.
+// Su código lo carga el navegador de un CDN: con la versión exacta, como los paquetes de npm.
 app.get(
   '/docs',
   Scalar({
     url: '/v2/openapi.json',
-    pageTitle: 'Shop API',
+    pageTitle: 'API de la tienda',
     cdn: 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.0',
   }),
 );
 
-// #region echo
-// If the request asks to switch to WebSocket, echo takes the connection. If not, the route says
-// that only WebSocket is spoken here: 426 Upgrade Required.
-app.get('/echo', echo, (c) =>
-  httpProblem(c, 426, 'This route only speaks WebSocket', { Upgrade: 'websocket' }),
+// #region eco
+// Si la petición pide cambiar a WebSocket, eco se queda con la conexión. Si no, la ruta dice
+// que aquí solo se habla WebSocket: 426 Upgrade Required.
+app.get('/eco', eco, (c) =>
+  problemaHttp(c, 426, 'Esta ruta solo habla WebSocket', { Upgrade: 'websocket' }),
 );
-// #endregion echo
+// #endregion eco
 
-// #region health
-// Is the shop fine? The Dockerfile's HEALTHCHECK asks every few seconds (in Phase 8, the load
-// balancer too). Without the database the shop can hardly do anything, so it only answers 200 if
-// PostgreSQL replies; if not, 503 Service Unavailable.
-app.get('/health', async (c) => {
+// #region salud
+// ¿Está bien la tienda? La pregunta el HEALTHCHECK del Dockerfile cada pocos segundos (en la Fase
+// 8, también el balanceador). Sin la base de datos la tienda no puede hacer casi nada, así que
+// solo responde 200 si PostgreSQL contesta; si no, 503 Service Unavailable.
+app.get('/salud', async (c) => {
   try {
     await pool.query('SELECT 1');
-    return c.json({ status: 'ok' });
+    return c.json({ estado: 'ok' });
   } catch {
-    return httpProblem(c, 503, 'The database is not responding');
+    return problemaHttp(c, 503, 'La base de datos no responde');
   }
 });
-// #endregion health
+// #endregion salud
 
-// #region errors
-// What doesn't exist: a 404 with the same shape as the rest of the errors.
-app.notFound((c) => httpProblem(c, 404, 'No such route'));
+// #region errores
+// Lo que no existe: un 404 con la misma forma que el resto de errores.
+app.notFound((c) => problemaHttp(c, 404, 'No existe esa ruta'));
 
-// Any error that escapes from a route ends up here.
+// Cualquier error que se escape de una ruta acaba aquí.
 app.onError((error, c) => {
-  // The errors Hono throws already carry their status code (malformed JSON is a 400).
+  // Los errores que lanza Hono ya traen su código (un JSON mal formado es un 400).
   if (error instanceof HTTPException) {
-    // The only 403 that arrives here is checkOrigin's (middleware/session.ts).
+    // El único 403 que llega aquí es el de comprobarOrigen (middleware/sesion.ts).
     if (error.status === 403) {
-      return httpProblem(
-        c,
-        403,
-        'The request comes from another site and uses your session: it is not accepted',
-      );
+      return problemaHttp(c, 403, 'La petición viene de otra web y usa tu sesión: no se acepta');
     }
-    return httpProblem(c, error.status, 'The request cannot be read');
+    return problemaHttp(c, error.status, 'La petición no se puede leer');
   }
-  // A change that clashes with the data already there (a product with orders, when deleting it): 409.
-  const conflict = dbConflict(c, error);
-  if (conflict) return conflict;
+  // Un cambio que choca con los datos que ya hay (un producto con pedidos, al borrarlo): 409.
+  const conflicto = conflictoDeBd(c, error);
+  if (conflicto) return conflicto;
   const id = c.get('requestId');
-  // The stack trace goes to the log. The client gets nothing about how the server is built: only
-  // that it failed and, in instance, the request id, to find it in the log if they report it.
-  log.error({ err: error, requestId: id }, 'uncaught error');
-  return problem(c, {
+  // La traza va al log. Al cliente, nada de cómo está hecho el servidor: solo que ha fallado y,
+  // en instance, el id de la petición, para buscarla en el log si avisa.
+  log.error({ err: error, requestId: id }, 'error sin capturar');
+  return problema(c, {
     type: 'about:blank',
     title: 'Internal Server Error',
     status: 500,
-    detail: 'Something failed on the server. If it happens again, tell us the value of instance.',
+    detail: 'Algo ha fallado en el servidor. Si se repite, avísanos con el valor de instance.',
     instance: `urn:uuid:${id}`,
   });
 });
-// #endregion errors
+// #endregion errores

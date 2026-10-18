@@ -1,17 +1,17 @@
-// The configuration of drizzle-kit, Drizzle's tool for the schema. Here it only generates
-// migrations: npm run db:generate -- --name=what-changes
-// drizzle-kit compares src/schema.ts with the last snapshot of the schema it saved (drizzle/meta/)
-// and writes into drizzle/ the SQL for what has changed. It doesn't apply it: that file is copied to
-// db/migrations/ with the next number, and our runner applies it (npm run db:migrate), like the
-// others. drizzle/0000_base.sql is the starting snapshot: the tables from migrations 001 to 003,
-// which already existed. It's never applied.
-// From 005 on, the migration in db/migrations/ is written by hand, with comments that explain it,
-// and it says the same as the SQL drizzle-kit generated (drizzle/0002_users.sql…). drizzle/ keeps
-// that snapshot so that next time drizzle-kit knows what has changed.
+// La configuración de drizzle-kit, la herramienta de Drizzle para el esquema. Aquí solo genera
+// migraciones: npm run bd:generar -- --name=lo-que-cambia
+// drizzle-kit compara src/esquema.ts con la última foto del esquema que guardó (drizzle/meta/) y
+// escribe en drizzle/ el SQL de lo que ha cambiado. No lo aplica: ese fichero se copia a
+// bd/migraciones/ con el número siguiente, y lo aplica nuestro ejecutor (npm run bd:migrar), como
+// las demás. drizzle/0000_base.sql es la foto de partida: las tablas de las migraciones 001 a 003,
+// que ya existían. No se aplica nunca.
+// Desde la 005, la migración de bd/migraciones/ se escribe a mano, con comentarios que la explican,
+// y dice lo mismo que el SQL que generó drizzle-kit (drizzle/0002_usuarios.sql…). drizzle/ guarda
+// esa foto para que la siguiente vez drizzle-kit sepa qué ha cambiado.
 import { defineConfig } from 'drizzle-kit';
 
 export default defineConfig({
   dialect: 'postgresql',
-  schema: './src/schema.ts',
+  schema: './src/esquema.ts',
   out: './drizzle',
 });

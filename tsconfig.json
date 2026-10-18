@@ -1,13 +1,13 @@
 {
-  // Only for checking the types (npm run check): Node runs the .ts files without compiling them.
+  // Solo para comprobar los tipos (npm run check): Node ejecuta los .ts sin compilarlos.
   "compilerOptions": {
     "target": "esnext",
     "module": "nodenext",
     "strict": true,
     "noEmit": true,
-    // Imports include the .ts extension, the way Node reads them.
+    // Los import llevan la extensión .ts, como los lee Node.
     "allowImportingTsExtensions": true,
-    // Only the part of TypeScript that Node can erase: no enum, for example.
+    // Solo la parte de TypeScript que Node sabe borrar: nada de enum, por ejemplo.
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,

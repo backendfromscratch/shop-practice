@@ -1,11 +1,11 @@
 {
-  "id": "155c3567-c329-4443-8d2e-9d889d039f66",
-  "prevId": "b76bfb1f-558c-4f4a-89c6-d97b5fe6a687",
+  "id": "2631d99b-5772-43dd-97f4-955f9ebf81d3",
+  "prevId": "7260a03d-8ed6-47ae-b408-64e7cfd11614",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.api_keys": {
-      "name": "api_keys",
+    "public.categorias": {
+      "name": "categorias",
       "schema": "",
       "columns": {
         "id": {
@@ -15,7 +15,7 @@
           "notNull": true,
           "identity": {
             "type": "always",
-            "name": "api_keys_id_seq",
+            "name": "categorias_id_seq",
             "schema": "public",
             "increment": "1",
             "startWith": "1",
@@ -25,8 +25,50 @@
             "cycle": false
           }
         },
-        "name": {
-          "name": "name",
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "categorias_nombre_unique": {
+          "name": "categorias_nombre_unique",
+          "nullsNotDistinct": false,
+          "columns": ["nombre"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.claves_api": {
+      "name": "claves_api",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "claves_api_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "nombre": {
+          "name": "nombre",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -37,15 +79,15 @@
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
+        "creada_en": {
+          "name": "creada_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "used_at": {
-          "name": "used_at",
+        "usada_en": {
+          "name": "usada_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -55,8 +97,8 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "api_keys_hash_unique": {
-          "name": "api_keys_hash_unique",
+        "claves_api_hash_unique": {
+          "name": "claves_api_hash_unique",
           "nullsNotDistinct": false,
           "columns": ["hash"]
         }
@@ -65,72 +107,30 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.categories": {
-      "name": "categories",
+    "public.claves_idempotencia": {
+      "name": "claves_idempotencia",
       "schema": "",
       "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "categories_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "categories_name_unique": {
-          "name": "categories_name_unique",
-          "nullsNotDistinct": false,
-          "columns": ["name"]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.idempotency_keys": {
-      "name": "idempotency_keys",
-      "schema": "",
-      "columns": {
-        "key": {
-          "name": "key",
+        "clave": {
+          "name": "clave",
           "type": "text",
           "primaryKey": true,
           "notNull": true
         },
-        "request_body": {
-          "name": "request_body",
+        "cuerpo_peticion": {
+          "name": "cuerpo_peticion",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "status": {
-          "name": "status",
+        "estado": {
+          "name": "estado",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "body": {
-          "name": "body",
+        "cuerpo": {
+          "name": "cuerpo",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -141,8 +141,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "created_at": {
-          "name": "created_at",
+        "creado_en": {
+          "name": "creado_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -157,8 +157,34 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.orders": {
-      "name": "orders",
+    "public.eventos_procesados": {
+      "name": "eventos_procesados",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "procesado_en": {
+          "name": "procesado_en",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pedidos": {
+      "name": "pedidos",
       "schema": "",
       "columns": {
         "id": {
@@ -168,7 +194,7 @@
           "notNull": true,
           "identity": {
             "type": "always",
-            "name": "orders_id_seq",
+            "name": "pedidos_id_seq",
             "schema": "public",
             "increment": "1",
             "startWith": "1",
@@ -178,37 +204,37 @@
             "cycle": false
           }
         },
-        "product_id": {
-          "name": "product_id",
+        "producto_id": {
+          "name": "producto_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "quantity": {
-          "name": "quantity",
+        "cantidad": {
+          "name": "cantidad",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "status": {
-          "name": "status",
+        "estado": {
+          "name": "estado",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
+        "creado_en": {
+          "name": "creado_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         }
       },
       "indexes": {
-        "orders_by_date": {
-          "name": "orders_by_date",
+        "pedidos_por_fecha": {
+          "name": "pedidos_por_fecha",
           "columns": [
             {
-              "expression": "created_at",
+              "expression": "creado_en",
               "isExpression": false,
               "asc": false,
               "nulls": "last"
@@ -227,11 +253,11 @@
         }
       },
       "foreignKeys": {
-        "orders_product_id_products_id_fk": {
-          "name": "orders_product_id_products_id_fk",
-          "tableFrom": "orders",
-          "tableTo": "products",
-          "columnsFrom": ["product_id"],
+        "pedidos_producto_id_productos_id_fk": {
+          "name": "pedidos_producto_id_productos_id_fk",
+          "tableFrom": "pedidos",
+          "tableTo": "productos",
+          "columnsFrom": ["producto_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -241,110 +267,19 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "orders_quantity_check": {
-          "name": "orders_quantity_check",
-          "value": "\"orders\".\"quantity\" > 0"
+        "pedidos_cantidad_check": {
+          "name": "pedidos_cantidad_check",
+          "value": "\"pedidos\".\"cantidad\" > 0"
         },
-        "orders_status_check": {
-          "name": "orders_status_check",
-          "value": "\"orders\".\"status\" IN ('pending', 'paid', 'shipped', 'cancelled')"
+        "pedidos_estado_check": {
+          "name": "pedidos_estado_check",
+          "value": "\"pedidos\".\"estado\" IN ('pendiente', 'pagado', 'enviado', 'cancelado')"
         }
       },
       "isRLSEnabled": false
     },
-    "public.processed_events": {
-      "name": "processed_events",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "processed_at": {
-          "name": "processed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.product_categories": {
-      "name": "product_categories",
-      "schema": "",
-      "columns": {
-        "product_id": {
-          "name": "product_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "category_id": {
-          "name": "category_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "product_categories_by_category": {
-          "name": "product_categories_by_category",
-          "columns": [
-            {
-              "expression": "category_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "product_categories_product_id_products_id_fk": {
-          "name": "product_categories_product_id_products_id_fk",
-          "tableFrom": "product_categories",
-          "tableTo": "products",
-          "columnsFrom": ["product_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "product_categories_category_id_categories_id_fk": {
-          "name": "product_categories_category_id_categories_id_fk",
-          "tableFrom": "product_categories",
-          "tableTo": "categories",
-          "columnsFrom": ["category_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "product_categories_product_id_category_id_pk": {
-          "name": "product_categories_product_id_category_id_pk",
-          "columns": ["product_id", "category_id"]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.products": {
-      "name": "products",
+    "public.productos": {
+      "name": "productos",
       "schema": "",
       "columns": {
         "id": {
@@ -354,7 +289,7 @@
           "notNull": true,
           "identity": {
             "type": "always",
-            "name": "products_id_seq",
+            "name": "productos_id_seq",
             "schema": "public",
             "increment": "1",
             "startWith": "1",
@@ -364,14 +299,14 @@
             "cycle": false
           }
         },
-        "name": {
-          "name": "name",
+        "nombre": {
+          "name": "nombre",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "price_cents": {
-          "name": "price_cents",
+        "precio_centimos": {
+          "name": "precio_centimos",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -390,19 +325,84 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "products_price_cents_check": {
-          "name": "products_price_cents_check",
-          "value": "\"products\".\"price_cents\" > 0"
+        "productos_precio_centimos_check": {
+          "name": "productos_precio_centimos_check",
+          "value": "\"productos\".\"precio_centimos\" > 0"
         },
-        "stock_not_negative": {
-          "name": "stock_not_negative",
-          "value": "\"products\".\"stock\" >= 0"
+        "stock_no_negativo": {
+          "name": "stock_no_negativo",
+          "value": "\"productos\".\"stock\" >= 0"
         }
       },
       "isRLSEnabled": false
     },
-    "public.sessions": {
-      "name": "sessions",
+    "public.productos_categorias": {
+      "name": "productos_categorias",
+      "schema": "",
+      "columns": {
+        "producto_id": {
+          "name": "producto_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoria_id": {
+          "name": "categoria_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "productos_categorias_por_categoria": {
+          "name": "productos_categorias_por_categoria",
+          "columns": [
+            {
+              "expression": "categoria_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "productos_categorias_producto_id_productos_id_fk": {
+          "name": "productos_categorias_producto_id_productos_id_fk",
+          "tableFrom": "productos_categorias",
+          "tableTo": "productos",
+          "columnsFrom": ["producto_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "productos_categorias_categoria_id_categorias_id_fk": {
+          "name": "productos_categorias_categoria_id_categorias_id_fk",
+          "tableFrom": "productos_categorias",
+          "tableTo": "categorias",
+          "columnsFrom": ["categoria_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "productos_categorias_producto_id_categoria_id_pk": {
+          "name": "productos_categorias_producto_id_categoria_id_pk",
+          "columns": ["producto_id", "categoria_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sesiones": {
+      "name": "sesiones",
       "schema": "",
       "columns": {
         "id_hash": {
@@ -411,21 +411,21 @@
           "primaryKey": true,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
+        "usuario_id": {
+          "name": "usuario_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
+        "creada_en": {
+          "name": "creada_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "expires_at": {
-          "name": "expires_at",
+        "expira_en": {
+          "name": "expira_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
@@ -433,11 +433,11 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "sessions_user_id_users_id_fk": {
-          "name": "sessions_user_id_users_id_fk",
-          "tableFrom": "sessions",
-          "tableTo": "users",
-          "columnsFrom": ["user_id"],
+        "sesiones_usuario_id_usuarios_id_fk": {
+          "name": "sesiones_usuario_id_usuarios_id_fk",
+          "tableFrom": "sesiones",
+          "tableTo": "usuarios",
+          "columnsFrom": ["usuario_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
@@ -449,8 +449,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.users": {
-      "name": "users",
+    "public.usuarios": {
+      "name": "usuarios",
       "schema": "",
       "columns": {
         "id": {
@@ -460,7 +460,7 @@
           "notNull": true,
           "identity": {
             "type": "always",
-            "name": "users_id_seq",
+            "name": "usuarios_id_seq",
             "schema": "public",
             "increment": "1",
             "startWith": "1",
@@ -476,29 +476,29 @@
           "primaryKey": false,
           "notNull": true
         },
-        "password_hash": {
-          "name": "password_hash",
+        "hash_contrasena": {
+          "name": "hash_contrasena",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "created_at": {
-          "name": "created_at",
+        "creado_en": {
+          "name": "creado_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "provider_sub": {
-          "name": "provider_sub",
+        "sub_proveedor": {
+          "name": "sub_proveedor",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         }
       },
       "indexes": {
-        "users_email_unique": {
-          "name": "users_email_unique",
+        "usuarios_email_unico": {
+          "name": "usuarios_email_unico",
           "columns": [
             {
               "expression": "lower(\"email\")",
@@ -516,10 +516,10 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "users_provider_sub_unique": {
-          "name": "users_provider_sub_unique",
+        "usuarios_sub_proveedor_unique": {
+          "name": "usuarios_sub_proveedor_unique",
           "nullsNotDistinct": false,
-          "columns": ["provider_sub"]
+          "columns": ["sub_proveedor"]
         }
       },
       "policies": {},

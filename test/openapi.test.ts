@@ -1,109 +1,109 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { app } from '../src/app.ts';
-import { useDb } from './db.ts';
-import { CARMEN, asUser } from './identities.ts';
+import { usarBd } from './bd.ts';
+import { CARMEN, comoUsuario } from './identidades.ts';
 
-// The orders are placed by Carmen, a customer.
+// Los pedidos los hace Carmen, una clienta.
 let carmen: Record<string, string>;
-useDb(async () => {
-  carmen = await asUser(CARMEN);
+usarBd(async () => {
+  carmen = await comoUsuario(CARMEN);
 });
 
-const document = async () => (await app.request('/v2/openapi.json')).json();
+const documento = async () => (await app.request('/v2/openapi.json')).json();
 
-test('GET /v2/openapi.json: the contract, in OpenAPI 3.1, with the routes under /v2', async () => {
+test('GET /v2/openapi.json: el contrato, en OpenAPI 3.1, con las rutas bajo /v2', async () => {
   const res = await app.request('/v2/openapi.json');
   assert.equal(res.status, 200);
   const doc = await res.json();
   assert.equal(doc.openapi, '3.1.0');
-  assert.equal(doc.info.title, "API for Ana and Luis's shop");
+  assert.equal(doc.info.title, 'API de la tienda de Ana y Luis');
   assert.deepEqual(doc.servers, [{ url: '/v2' }]);
 });
 
-test("all of v2's routes are there, each with its methods", async () => {
-  const { paths } = await document();
-  const methods = Object.fromEntries(
-    Object.entries(paths).map(([path, operations]) => [path, Object.keys(operations as object)]),
+test('están todas las rutas de v2, cada una con sus métodos', async () => {
+  const { paths } = await documento();
+  const metodos = Object.fromEntries(
+    Object.entries(paths).map(([ruta, operaciones]) => [ruta, Object.keys(operaciones as object)]),
   );
-  assert.deepEqual(methods, {
-    '/products': ['get', 'post'],
-    '/products/{id}': ['get', 'delete'],
-    '/orders': ['get', 'post'],
-    '/orders/{id}': ['get', 'patch'],
-    '/orders/{id}/cancellation': ['post'],
-    '/orders/{id}/shipment': ['post'],
-    '/orders/{id}/events': ['get'],
-    '/webhooks/payments': ['post'],
-    '/accounts': ['post'],
-    '/session': ['post', 'delete'],
-    '/me': ['get'],
-    '/session/provider': ['get'],
-    '/session/provider/callback': ['get'],
-    '/delivery/notification': ['put'],
+  assert.deepEqual(metodos, {
+    '/productos': ['get', 'post'],
+    '/productos/{id}': ['get', 'delete'],
+    '/pedidos': ['get', 'post'],
+    '/pedidos/{id}': ['get', 'patch'],
+    '/pedidos/{id}/cancelacion': ['post'],
+    '/pedidos/{id}/envio': ['post'],
+    '/pedidos/{id}/eventos': ['get'],
+    '/webhooks/pagos': ['post'],
+    '/cuentas': ['post'],
+    '/sesion': ['post', 'delete'],
+    '/yo': ['get'],
+    '/sesion/proveedor': ['get'],
+    '/sesion/proveedor/vuelta': ['get'],
+    '/reparto/aviso': ['put'],
   });
 });
 
-test('the named schemas, and the token as the way to authenticate', async () => {
-  const { components } = await document();
+test('los esquemas con nombre, y el token como forma de autenticarse', async () => {
+  const { components } = await documento();
   assert.deepEqual(Object.keys(components.schemas).sort(), [
-    'Acknowledgement',
-    'Credentials',
-    'Me',
-    'NewAccount',
-    'NewOrder',
-    'NewProduct',
-    'Notification',
-    'Order',
-    'OrderChange',
-    'PaymentEvent',
-    'Problem',
-    'Product',
-    'SavedNotification',
-    'User',
+    'Acuse',
+    'Aviso',
+    'AvisoGuardado',
+    'CambioPedido',
+    'Credenciales',
+    'CuentaNueva',
+    'EventoPago',
+    'Pedido',
+    'PedidoNuevo',
+    'Problema',
+    'Producto',
+    'ProductoNuevo',
+    'Usuario',
+    'Yo',
   ]);
   assert.deepEqual(components.securitySchemes.Bearer, { type: 'http', scheme: 'bearer' });
-  assert.deepEqual(components.securitySchemes.Session, {
+  assert.deepEqual(components.securitySchemes.Sesion, {
     type: 'apiKey',
     in: 'cookie',
-    name: 'session',
+    name: 'sesion',
   });
 });
 
-test('the validation rules show up in the documentation: they are the same schemas', async () => {
-  const { components } = await document();
-  const quantity = components.schemas.NewOrder.properties.quantity;
-  assert.equal(quantity.type, 'integer');
-  assert.equal(quantity.minimum, 1);
-  assert.equal(quantity.maximum, 10);
-  assert.deepEqual(components.schemas.NewOrder.required, ['productId', 'quantity']);
+test('las reglas de validación salen en la documentación: son los mismos esquemas', async () => {
+  const { components } = await documento();
+  const cantidad = components.schemas.PedidoNuevo.properties.cantidad;
+  assert.equal(cantidad.type, 'integer');
+  assert.equal(cantidad.minimum, 1);
+  assert.equal(cantidad.maximum, 10);
+  assert.deepEqual(components.schemas.PedidoNuevo.required, ['productoId', 'cantidad']);
 });
 
-test('each route says what it answers, its errors too, as Problem Details', async () => {
-  const { paths } = await document();
-  const create = paths['/products'].post;
-  assert.deepEqual(create.security, [{ Session: [] }, { Bearer: [] }]);
-  assert.deepEqual(Object.keys(create.responses), ['201', '401', '403', '422']);
-  assert.ok(create.responses['201'].headers.Location);
-  assert.deepEqual(create.responses['422'].content['application/problem+json'].schema, {
-    $ref: '#/components/schemas/Problem',
+test('cada ruta dice qué responde, también sus errores como Problem Details', async () => {
+  const { paths } = await documento();
+  const crear = paths['/productos'].post;
+  assert.deepEqual(crear.security, [{ Sesion: [] }, { Bearer: [] }]);
+  assert.deepEqual(Object.keys(crear.responses), ['201', '401', '403', '422']);
+  assert.ok(crear.responses['201'].headers.Location);
+  assert.deepEqual(crear.responses['422'].content['application/problem+json'].schema, {
+    $ref: '#/components/schemas/Problema',
   });
-  const cancel = paths['/orders/{id}/cancellation'].post;
-  assert.deepEqual(Object.keys(cancel.responses), ['200', '401', '403', '404', '409', '422']);
-  // An invalid signature is a 400: a 401 would require WWW-Authenticate, which a signature lacks.
-  assert.deepEqual(Object.keys(paths['/webhooks/payments'].post.responses), ['200', '400', '422']);
+  const cancelar = paths['/pedidos/{id}/cancelacion'].post;
+  assert.deepEqual(Object.keys(cancelar.responses), ['200', '401', '403', '404', '409', '422']);
+  // Una firma que no vale es un 400: un 401 exigiría WWW-Authenticate, y una firma no lo tiene.
+  assert.deepEqual(Object.keys(paths['/webhooks/pagos'].post.responses), ['200', '400', '422']);
 });
 
-test("the path's id: a required integer", async () => {
-  const { paths } = await document();
-  const [id] = paths['/orders/{id}'].get.parameters;
+test('el id de la ruta: un entero obligatorio', async () => {
+  const { paths } = await documento();
+  const [id] = paths['/pedidos/{id}'].get.parameters;
   assert.equal(id.name, 'id');
   assert.equal(id.in, 'path');
   assert.equal(id.required, true);
   assert.equal(id.schema.type, 'integer');
 });
 
-test('GET /docs: the page that shows the contract, with Scalar at a fixed version', async () => {
+test('GET /docs: la página que enseña el contrato, con Scalar en una versión fija', async () => {
   const res = await app.request('/docs');
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /^text\/html/);
@@ -112,29 +112,29 @@ test('GET /docs: the page that shows the contract, with Scalar at a fixed versio
   assert.match(html, /@scalar\/api-reference@\d+\.\d+\.\d+/);
 });
 
-test("the contract's validation answers the same 422 as always", async () => {
-  const res = await app.request('/v2/orders', {
+test('la validación del contrato responde el mismo 422 de siempre', async () => {
+  const res = await app.request('/v2/pedidos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...carmen },
-    body: '{"productId":1,"quantity":11}',
+    body: '{"productoId":1,"cantidad":11}',
   });
   assert.equal(res.status, 422);
   assert.equal(res.headers.get('content-type'), 'application/problem+json');
-  assert.deepEqual((await res.json()).errors, [
-    { field: 'quantity', problem: 'At most 10 per order' },
+  assert.deepEqual((await res.json()).errores, [
+    { campo: 'cantidad', problema: 'Como máximo, 10 por pedido' },
   ]);
 });
 
-test('a body that does not say it is JSON: 415', async () => {
-  const res = await app.request('/v2/orders', {
+test('un cuerpo que no es JSON, ni lo dice: 415', async () => {
+  const res = await app.request('/v2/pedidos', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain', ...carmen },
-    body: '{"productId":1,"quantity":1}',
+    body: '{"productoId":1,"cantidad":1}',
   });
   assert.equal(res.status, 415);
   assert.equal((await res.json()).title, 'Unsupported Media Type');
 });
 
-test('v1 is not in the contract: /v1/openapi.json does not exist', async () => {
+test('v1 no está en el contrato: /v1/openapi.json no existe', async () => {
   assert.equal((await app.request('/v1/openapi.json')).status, 404);
 });
