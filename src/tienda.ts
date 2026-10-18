@@ -18,10 +18,10 @@ export function paginaTienda(productos: Producto[]) {
     <html lang="es">
       <head>
         <meta charset="utf-8" />
-        <title>La tienda de Ana y Luis (versión 2)</title>
+        <title>La tienda de Ana y Luis</title>
       </head>
       <body>
-        <h1>La tienda de Ana y Luis (versión 2)</h1>
+        <h1>La tienda de Ana y Luis</h1>
         <ul>
           ${productos.map(
             (producto) =>
