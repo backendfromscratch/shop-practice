@@ -18,10 +18,10 @@ export function shopPage(products: Product[]) {
     <html lang="en">
       <head>
         <meta charset="utf-8" />
-        <title>Ana and Luis's shop</title>
+        <title>Ana and Luis's shop (version 2)</title>
       </head>
       <body>
-        <h1>Ana and Luis's shop</h1>
+        <h1>Ana and Luis's shop (version 2)</h1>
         <ul>
           ${products.map(
             (product) => html`<li>${product.name}: ${euros.format(product.priceCents / 100)}</li>`,
