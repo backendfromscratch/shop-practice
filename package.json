@@ -1,5 +1,5 @@
 {
-  "name": "tienda-api",
+  "name": "shop-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -7,20 +7,20 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/servidor.ts",
-    "dev": "node --env-file-if-exists=.env --watch src/servidor.ts",
+    "start": "node --env-file-if-exists=.env src/server.ts",
+    "dev": "node --env-file-if-exists=.env --watch src/server.ts",
     "test": "node --env-file=test/.env --test --test-concurrency=1",
     "check": "tsc --noEmit",
-    "pasarela": "node --env-file-if-exists=.env scripts/pasarela.ts",
-    "bd:migrar": "node --env-file-if-exists=.env scripts/migrar.ts",
-    "bd:datos": "node --env-file-if-exists=.env scripts/cargar-datos.ts",
-    "bd:datos:produccion": "node --env-file-if-exists=.env scripts/cargar-datos.ts --sin-cuentas",
-    "bd:muchos-pedidos": "node --env-file-if-exists=.env scripts/muchos-pedidos.ts",
-    "bd:generar": "drizzle-kit generate",
-    "crear-clave": "node --env-file-if-exists=.env scripts/crear-clave.ts",
-    "crear-admin": "node --env-file-if-exists=.env scripts/crear-admin.ts",
-    "proveedor": "node scripts/proveedor.ts",
-    "otra-web": "node scripts/otra-web.ts"
+    "gateway": "node --env-file-if-exists=.env scripts/payment-gateway.ts",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
+    "db:seed": "node --env-file-if-exists=.env scripts/seed.ts",
+    "db:seed:production": "node --env-file-if-exists=.env scripts/seed.ts --no-accounts",
+    "db:many-orders": "node --env-file-if-exists=.env scripts/many-orders.ts",
+    "db:generate": "drizzle-kit generate",
+    "create-key": "node --env-file-if-exists=.env scripts/create-key.ts",
+    "create-admin": "node --env-file-if-exists=.env scripts/create-admin.ts",
+    "provider": "node scripts/provider.ts",
+    "other-site": "node scripts/other-site.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.3",

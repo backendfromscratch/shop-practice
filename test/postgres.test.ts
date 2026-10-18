@@ -5,144 +5,144 @@ import { createServer } from 'node:net';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { app } from '../src/app.ts';
-import { pool } from '../src/bd.ts';
-import { apuntarEvento } from '../src/datos.ts';
-import { usarBd } from './bd.ts';
-import { ANA, CARMEN, comoUsuario } from './identidades.ts';
+import { recordEvent } from '../src/data.ts';
+import { pool } from '../src/db.ts';
+import { useDb } from './db.ts';
+import { ANA, CARMEN, asUser } from './identities.ts';
 
-// Ana, admin; Carmen, clienta.
+// Ana, admin; Carmen, a customer.
 let ana: Record<string, string>;
 let carmen: Record<string, string>;
-usarBd(async () => {
-  ana = await comoUsuario(ANA);
-  carmen = await comoUsuario(CARMEN);
+useDb(async () => {
+  ana = await asUser(ANA);
+  carmen = await asUser(CARMEN);
 });
 
-const ejecutar = promisify(execFile);
+const run = promisify(execFile);
 
-// Ninguna ruta de la API crea categorías: el test añade la suya, con un nombre que ya existe.
-app.get('/prueba-de-repetido', async (c) => {
-  await pool.query(`INSERT INTO categorias (nombre) VALUES ('Ropa')`);
-  return c.text('no debería llegar aquí');
+// No API route creates categories: the test adds its own, with a name that already exists.
+app.get('/repeated-test', async (c) => {
+  await pool.query(`INSERT INTO categories (name) VALUES ('Clothing')`);
+  return c.text('it should not get here');
 });
 
-/** Arranca src/servidor.ts en un puerto libre y devuelve el proceso y su dirección. */
-async function arrancar(): Promise<{ servidor: ChildProcess; url: string }> {
-  const libre = createServer().listen(0, '127.0.0.1');
-  await once(libre, 'listening');
-  const puerto = (libre.address() as { port: number }).port;
-  libre.close();
-  const servidor = spawn('node', ['src/servidor.ts'], {
-    env: { ...process.env, PORT: String(puerto), LOG_LEVEL: 'info' },
+/** Starts src/server.ts on a free port and returns the process and its address. */
+async function start(): Promise<{ server: ChildProcess; url: string }> {
+  const free = createServer().listen(0, '127.0.0.1');
+  await once(free, 'listening');
+  const port = (free.address() as { port: number }).port;
+  free.close();
+  const server = spawn('node', ['src/server.ts'], {
+    env: { ...process.env, PORT: String(port), LOG_LEVEL: 'info' },
   });
-  await once(servidor.stdout!, 'data'); // la línea «La tienda escucha en…»
-  return { servidor, url: `http://127.0.0.1:${puerto}` };
+  await once(server.stdout!, 'data'); // the line "The shop is listening on…"
+  return { server, url: `http://127.0.0.1:${port}` };
 }
 
-/** Para el servidor y espera a que termine. */
-async function parar(servidor: ChildProcess) {
-  servidor.kill();
-  await once(servidor, 'exit');
+/** Stops the server and waits for it to finish. */
+async function stop(server: ChildProcess) {
+  server.kill();
+  await once(server, 'exit');
 }
 
-test('los datos sobreviven a un reinicio del servidor, también las claves de idempotencia', async () => {
-  const pedir = (url: string) =>
-    fetch(`${url}/v2/pedidos`, {
+test('the data survives a server restart, the idempotency keys too', async () => {
+  const send = (url: string) =>
+    fetch(`${url}/v2/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Idempotency-Key': 'antes-del-reinicio',
+        'Idempotency-Key': 'before-the-restart',
         ...carmen,
       },
-      body: '{"productoId":3,"cantidad":2}',
+      body: '{"productId":3,"quantity":2}',
     });
 
-  const primero = await arrancar();
-  const creado = await (await pedir(primero.url)).json();
-  await parar(primero.servidor);
+  const first = await start();
+  const created = await (await send(first.url)).json();
+  await stop(first.server);
 
-  // Otro proceso, con su propio pool: lo único que comparte con el anterior es la base de datos.
-  const segundo = await arrancar();
+  // Another process, with its own pool: the only thing it shares with the previous one is the
+  // database.
+  const second = await start();
   try {
-    const leido = await fetch(`${segundo.url}/v2/pedidos/${creado.id}`, { headers: carmen });
-    assert.equal(leido.status, 200);
-    assert.deepEqual(await leido.json(), creado);
-    const repetido = await pedir(segundo.url);
-    assert.equal(repetido.headers.get('idempotent-replayed'), 'true');
-    assert.deepEqual(await repetido.json(), creado);
+    const read = await fetch(`${second.url}/v2/orders/${created.id}`, { headers: carmen });
+    assert.equal(read.status, 200);
+    assert.deepEqual(await read.json(), created);
+    const repeated = await send(second.url);
+    assert.equal(repeated.headers.get('idempotent-replayed'), 'true');
+    assert.deepEqual(await repeated.json(), created);
   } finally {
-    await parar(segundo.servidor);
+    await stop(second.server);
   }
 });
 
-test('cada fila sale con los nombres de la API: precioCentimos, productoId y creadoEn en ISO 8601', async () => {
-  assert.deepEqual(await (await app.request('/v2/productos/4')).json(), {
+test('each row comes out with the API names: priceCents, productId and createdAt in ISO 8601', async () => {
+  assert.deepEqual(await (await app.request('/v2/products/4')).json(), {
     id: 4,
-    nombre: 'Gorra',
-    precioCentimos: 1500,
+    name: 'Cap',
+    priceCents: 1500,
     stock: 15,
-    categorias: ['Ropa', 'Regalos'],
+    categories: ['Clothing', 'Gifts'],
   });
-  assert.deepEqual(await (await app.request('/v2/pedidos/1', { headers: ana })).json(), {
+  assert.deepEqual(await (await app.request('/v2/orders/1', { headers: ana })).json(), {
     id: 1,
-    productoId: 2,
-    cantidad: 2,
-    estado: 'enviado',
-    creadoEn: '2026-10-01T09:00:00.000Z',
-    clienteId: 3,
+    productId: 2,
+    quantity: 2,
+    status: 'shipped',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    customerId: 3,
   });
 });
 
-test('borrar un producto con pedidos: 409 como Problem Details, y el producto sigue ahí', async () => {
-  const res = await app.request('/v2/productos/1', { method: 'DELETE', headers: ana });
+test('deleting a product with orders: 409 as Problem Details, and the product is still there', async () => {
+  const res = await app.request('/v2/products/1', { method: 'DELETE', headers: ana });
   assert.equal(res.status, 409);
   assert.equal(res.headers.get('content-type'), 'application/problem+json');
   assert.deepEqual(await res.json(), {
     type: 'about:blank',
     title: 'Conflict',
     status: 409,
-    detail:
-      'Otros datos dependen de este: un producto con pedidos, por ejemplo, no se puede borrar',
+    detail: 'Other data depends on this: a product with orders, for example, cannot be deleted',
   });
-  assert.equal((await app.request('/v2/productos/1')).status, 200);
+  assert.equal((await app.request('/v2/products/1')).status, 200);
   const doc = await (await app.request('/v2/openapi.json')).json();
-  assert.ok(doc.paths['/productos/{id}'].delete.responses['409']);
+  assert.ok(doc.paths['/products/{id}'].delete.responses['409']);
 });
 
-test('un valor repetido donde tiene que ser único (23505): 409, no 500', async () => {
-  const res = await app.request('/prueba-de-repetido');
+test('a repeated value where it has to be unique (23505): 409, not 500', async () => {
+  const res = await app.request('/repeated-test');
   assert.equal(res.status, 409);
-  assert.equal((await res.json()).detail, 'Ya existe un dato igual, y no se puede repetir');
+  assert.equal(
+    (await res.json()).detail,
+    'The same data already exists, and it cannot be repeated',
+  );
 });
 
-test('un aviso de pago queda apuntado en eventos_procesados', async () => {
-  const { rows } = await pool.query('SELECT count(*)::int AS n FROM eventos_procesados');
+test('a payment notification is written down in processed_events', async () => {
+  const { rows } = await pool.query('SELECT count(*)::int AS n FROM processed_events');
   assert.equal(rows[0].n, 0);
-  assert.equal(await apuntarEvento('evt_prueba'), true);
-  assert.equal(await apuntarEvento('evt_prueba'), false, 'la segunda vez ya estaba');
+  assert.equal(await recordEvent('evt_test'), true);
+  assert.equal(await recordEvent('evt_test'), false, 'the second time it was already there');
 });
 
-test('ejemplos/inyeccion.ts: pegando el texto, el valor malicioso trae todo; con un parámetro, nada', async () => {
-  const { stdout } = await ejecutar('node', ['ejemplos/inyeccion.ts']);
-  const [normal, malicioso] = stdout.split('\nSe busca: ').slice(1);
-  assert.match(normal!, /Pegando el texto, encuentra: \[ 'Taza' \]/);
-  assert.match(normal!, /Con un parámetro, encuentra: \[ 'Taza' \]/);
+test('examples/injection.ts: pasting the text, the malicious value brings everything; with a parameter, nothing', async () => {
+  const { stdout } = await run('node', ['examples/injection.ts']);
+  const [normal, malicious] = stdout.split('\nSearching for: ').slice(1);
+  assert.match(normal!, /Pasting the text, it finds: \[ 'Mug' \]/);
+  assert.match(normal!, /With a parameter, it finds: \[ 'Mug' \]/);
   assert.match(
-    malicioso!,
-    /La consulta: SELECT nombre FROM productos WHERE nombre = 'x' OR '1'='1' ORDER BY id$/m,
+    malicious!,
+    /The query: SELECT name FROM products WHERE name = 'x' OR '1'='1' ORDER BY id$/m,
   );
-  assert.match(
-    malicioso!,
-    /Pegando el texto, encuentra: \[ 'Camiseta', 'Taza', 'Sudadera', 'Gorra' \]/,
-  );
-  assert.match(malicioso!, /Con un parámetro, encuentra: \[\]/);
+  assert.match(malicious!, /Pasting the text, it finds: \[ 'T-shirt', 'Mug', 'Hoodie', 'Cap' \]/);
+  assert.match(malicious!, /With a parameter, it finds: \[\]/);
 });
 
-test('sin DATABASE_URL, el servidor no arranca y dice por qué', async () => {
-  const { DATABASE_URL, ...sinBaseDeDatos } = process.env;
-  const resultado = await ejecutar('node', ['src/servidor.ts'], { env: sinBaseDeDatos }).catch(
+test('without DATABASE_URL, the server does not start and says why', async () => {
+  const { DATABASE_URL, ...withoutDatabase } = process.env;
+  const result = await run('node', ['src/server.ts'], { env: withoutDatabase }).catch(
     (error) => error,
   );
-  assert.equal(resultado.code, 1);
-  assert.match(resultado.stderr, /Configuración: DATABASE_URL: Falta DATABASE_URL/);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Configuration: DATABASE_URL: DATABASE_URL is missing/);
 });

@@ -1,27 +1,27 @@
-# Lo que no entra en la imagen: docker build no lo manda, y COPY . . no lo encuentra.
+# What doesn't go into the image: docker build doesn't send it, and COPY . . doesn't find it.
 
-# Las dependencias se instalan dentro, con npm ci, para Linux: las de tu ordenador pueden ser de
-# otro sistema, y pesan.
+# The dependencies are installed inside, with npm ci, for Linux: the ones on your computer may be
+# for another system, and they're heavy.
 node_modules
 
-# Tus secretos. Una imagen se comparte, y quien la tiene puede leer todos sus ficheros: la
-# configuración llega al arrancar, con --env-file o -e.
+# Your secrets. An image is shared, and whoever has it can read all its files: the configuration
+# arrives at startup, with --env-file or -e.
 .env
 
-# La historia de Git, los logs y los ficheros de Docker, que la API no usa.
+# The Git history, the logs and the Docker files, which the API doesn't use.
 .git
 *.log
 Dockerfile
 .dockerignore
 compose.yaml
 
-# Lo que es del servidor, no de la API (Fase 8): la configuración de nginx, la copia de seguridad, el
-# Compose de producción, las copias ya hechas y el workflow que publica la imagen (Fase 8,
-# lección 6), y la anotación del despliegue.
+# What belongs to the server, not to the API (Phase 8): nginx's configuration, the backup, the
+# production Compose, the copies already made, the workflow that publishes the image (Phase 8,
+# lesson 6) and the deployment's note.
 nginx
-despliegue
-copias
-compose.produccion.yaml
-.env.produccion.ejemplo
+deployment
+backups
+compose.production.yaml
+.env.production.example
 .github
-.despliegue-fallido
+.deploy-failed

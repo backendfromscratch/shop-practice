@@ -1,91 +1,88 @@
-// La versión 1 de la API, la de antes: los precios, en euros con decimales (precio). Sigue
-// funcionando para los clientes que aún la usan, pero está obsoleta y tiene fecha de retirada.
-// No guarda nada suyo: lee y escribe los mismos datos que la 2 y solo traduce lo que cambió.
+// Version 1 of the API, the old one: prices in euros with decimals (price). It keeps working for
+// the clients that still use it, but it's deprecated and has a retirement date. It stores nothing
+// of its own: it reads and writes the same data as version 2 and only translates what changed.
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { buscarProducto, crearProducto, listarProductos, type Producto } from './datos.ts';
-import { esquemaFiltro, esquemaId, esquemaNombre } from './esquemas.ts';
-import type { Entorno } from './entorno.ts';
-import { validar } from './middleware/validar.ts';
-import { exigir } from './permisos.ts';
-import { problemaHttp } from './problemas.ts';
+import { createProduct, findProduct, listProducts, type Product } from './data.ts';
+import type { Env } from './env.ts';
+import { validate } from './middleware/validate.ts';
+import { requirePermission } from './permissions.ts';
+import { httpProblem } from './problems.ts';
+import { filterSchema, idSchema, nameSchema } from './schemas.ts';
 import { v2 } from './v2.ts';
 
-export const v1 = new Hono<Entorno>();
+export const v1 = new Hono<Env>();
 
-// #region avisos
-// Desde cuándo está obsoleta (RFC 9745: los segundos desde 1970, con una @ delante) y cuándo
-// dejará de funcionar (RFC 8594: una fecha HTTP, como la de Expires).
-const OBSOLETA_DESDE = new Date('2026-10-13T00:00:00Z');
-export const RETIRADA = new Date('2027-04-13T00:00:00Z');
+// #region warnings
+// Since when it's deprecated (RFC 9745: the seconds since 1970, with an @ in front) and when it
+// will stop working (RFC 8594: an HTTP date, like the one in Expires).
+const DEPRECATED_SINCE = new Date('2026-10-13T00:00:00Z');
+export const SUNSET = new Date('2027-04-13T00:00:00Z');
 
-// Cada respuesta de v1 lo avisa en sus cabeceras, y dice dónde está lo mismo en la versión 2.
+// Every v1 response says so in its headers, and says where the same thing is in version 2.
 v1.use(async (c, next) => {
   await next();
-  c.header('Deprecation', `@${OBSOLETA_DESDE.getTime() / 1000}`);
-  c.header('Sunset', RETIRADA.toUTCString());
-  const sucesora = c.req.path.replace(/^\/v1/, '/v2');
-  // append: la respuesta puede traer ya un Link (la página siguiente) y no hay que borrarlo.
-  c.header('Link', `<${sucesora}>; rel="successor-version"`, { append: true });
+  c.header('Deprecation', `@${DEPRECATED_SINCE.getTime() / 1000}`);
+  c.header('Sunset', SUNSET.toUTCString());
+  const successor = c.req.path.replace(/^\/v1/, '/v2');
+  // append: the response may already carry a Link (the next page) and it mustn't be deleted.
+  c.header('Link', `<${successor}>; rel="successor-version"`, { append: true });
 });
-// #endregion avisos
+// #endregion warnings
 
-// #region traducir
-// Un producto como lo daba la versión 1: el precio, en euros.
-function productoV1(producto: Producto) {
-  return { id: producto.id, nombre: producto.nombre, precio: producto.precioCentimos / 100 };
+// #region translate
+// A product the way version 1 gave it: the price, in euros.
+function productV1(product: Product) {
+  return { id: product.id, name: product.name, price: product.priceCents / 100 };
 }
 
-// Los esquemas de la versión 1, con el precio en euros.
-const esquemaProductoV1 = z.object({
-  nombre: esquemaNombre,
-  precio: z
-    .number({ error: 'Tiene que ser un número' })
-    .positive('Tiene que ser mayor que 0')
-    .max(10_000, 'Como máximo, 10 000 €'),
+// Version 1's schemas, with the price in euros.
+const productSchemaV1 = z.object({
+  name: nameSchema,
+  price: z
+    .number({ error: 'Must be a number' })
+    .positive('Must be greater than 0')
+    .max(10_000, 'At most €10,000'),
 });
 
-const esquemaFiltroV1 = z.object({
-  max: z.coerce
-    .number({ error: 'Tiene que ser un número' })
-    .positive('Tiene que ser mayor que 0')
-    .optional(),
-  orden: esquemaFiltro.shape.orden,
+const filterSchemaV1 = z.object({
+  max: z.coerce.number({ error: 'Must be a number' }).positive('Must be greater than 0').optional(),
+  sort: filterSchema.shape.sort,
 });
-// #endregion traducir
+// #endregion translate
 
-// #region leer-v1
-// Solo las rutas que cambiaron: las que llevan precio.
-v1.get('/productos', validar('query', esquemaFiltroV1), async (c) => {
-  const { max, orden } = c.req.valid('query');
-  let lista = (await listarProductos()).map(productoV1);
-  if (max !== undefined) lista = lista.filter((producto) => producto.precio <= max);
-  if (orden === 'precio') lista = lista.toSorted((a, b) => a.precio - b.precio);
-  if (orden === '-precio') lista = lista.toSorted((a, b) => b.precio - a.precio);
-  return c.json(lista);
+// #region read-v1
+// Only the routes that changed: the ones that carry a price.
+v1.get('/products', validate('query', filterSchemaV1), async (c) => {
+  const { max, sort } = c.req.valid('query');
+  let list = (await listProducts()).map(productV1);
+  if (max !== undefined) list = list.filter((product) => product.price <= max);
+  if (sort === 'price') list = list.toSorted((a, b) => a.price - b.price);
+  if (sort === '-price') list = list.toSorted((a, b) => b.price - a.price);
+  return c.json(list);
 });
 
-v1.get('/productos/:id', validar('param', esquemaId), async (c) => {
-  const producto = await buscarProducto(c.req.valid('param').id);
-  if (!producto) return problemaHttp(c, 404, 'No existe ese producto');
-  return c.json(productoV1(producto));
+v1.get('/products/:id', validate('param', idSchema), async (c) => {
+  const product = await findProduct(c.req.valid('param').id);
+  if (!product) return httpProblem(c, 404, 'No such product');
+  return c.json(productV1(product));
 });
-// #endregion leer-v1
+// #endregion read-v1
 
-// #region crear-v1
-// Las mismas protecciones que la versión 2: también aquí, crear productos es cosa de admin.
+// #region create-v1
+// The same protections as version 2: here too, creating products is admin's business.
 v1.post(
-  '/productos',
-  exigir('productos:gestionar'),
-  validar('json', esquemaProductoV1),
+  '/products',
+  requirePermission('products:manage'),
+  validate('json', productSchemaV1),
   async (c) => {
-    const { nombre, precio } = c.req.valid('json');
-    // De euros a céntimos. Math.round, porque 8.29 * 100 es 828.9999999999999.
-    const producto = await crearProducto(nombre, Math.round(precio * 100));
-    return c.json(productoV1(producto), 201, { Location: `${c.req.path}/${producto.id}` });
+    const { name, price } = c.req.valid('json');
+    // From euros to cents. Math.round, because 8.29 * 100 is 828.9999999999999.
+    const product = await createProduct(name, Math.round(price * 100));
+    return c.json(productV1(product), 201, { Location: `${c.req.path}/${product.id}` });
   },
 );
 
-// Todo lo demás (los pedidos, borrar un producto) no ha cambiado: lo atienden las rutas de la 2.
+// Everything else (the orders, deleting a product) hasn't changed: version 2's routes handle it.
 v1.route('/', v2);
-// #endregion crear-v1
+// #endregion create-v1
